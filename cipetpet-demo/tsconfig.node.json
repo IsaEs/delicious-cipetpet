@@ -1,0 +1,8 @@
+{
+  // Tests (vitest, Node + jsdom) and the Node-side config. Same settings as tsconfig.json plus Node's types.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src/**/*.d.ts", "test", "vitest.config.ts"]
+}

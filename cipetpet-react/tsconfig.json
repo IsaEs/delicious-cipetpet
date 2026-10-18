@@ -1,0 +1,31 @@
+{
+  // Type-checks src/, test/ and example/ (no emit; `npm run build` uses tsconfig.build.json).
+  //
+  // "cipetpet" resolution while the core is developed side by side:
+  //   1. ../cipetpet/src/index.ts       the core's TypeScript sources (checked against the real code)
+  //   2. ./contract/cipetpet.d.ts       fallback: the binding contract, used only while (1) does not exist yet
+  // The published package does not use these paths: consumers resolve the real "cipetpet" dependency.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker.ImportScripts"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": [],
+    "paths": {
+      "cipetpet": ["../cipetpet/src/index.ts", "./contract/cipetpet.d.ts"],
+      "cipetpet/*": ["../cipetpet/src/*/index.ts"],
+      // the example imports the package by name
+      "cipetpet-react": ["./src/index.ts"]
+    }
+  },
+  "include": ["src", "test", "example"],
+  "exclude": ["node_modules", "dist", "example/dist"]
+}

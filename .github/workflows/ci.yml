@@ -1,0 +1,77 @@
+# Type-check, build and run the browser-free unit tests of the three packages.
+# They depend on each other through file: dependencies, so the build order is
+# cipetpet -> cipetpet-react (needs ../cipetpet/dist) -> cipetpet-demo (needs both dist folders).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            cipetpet/package-lock.json
+            cipetpet-react/package-lock.json
+            cipetpet-demo/package-lock.json
+
+      # ---- cipetpet (core)
+      - name: cipetpet - install
+        working-directory: cipetpet
+        run: npm ci
+      - name: cipetpet - type-check
+        working-directory: cipetpet
+        run: npm run typecheck
+      - name: cipetpet - build
+        working-directory: cipetpet
+        run: npm run build
+      # tests that need no browser, no Python and no model files (the others skip themselves or run in the release workflow)
+      - name: cipetpet - unit tests
+        working-directory: cipetpet
+        run: npm run test:unit
+
+      # ---- cipetpet-react (uses ../cipetpet through "file:../cipetpet")
+      - name: cipetpet-react - install
+        working-directory: cipetpet-react
+        run: npm ci
+      - name: cipetpet-react - type-check
+        working-directory: cipetpet-react
+        run: npm run typecheck
+      - name: cipetpet-react - tests
+        working-directory: cipetpet-react
+        run: npm test
+      - name: cipetpet-react - build
+        working-directory: cipetpet-react
+        run: npm run build
+
+      # ---- cipetpet-demo (uses ../cipetpet and ../cipetpet-react)
+      - name: cipetpet-demo - install
+        working-directory: cipetpet-demo
+        run: npm ci
+      - name: cipetpet-demo - type-check
+        working-directory: cipetpet-demo
+        run: npm run typecheck
+      - name: cipetpet-demo - tests
+        working-directory: cipetpet-demo
+        run: npm test

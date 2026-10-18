@@ -1,0 +1,105 @@
+{
+  "name": "cipetpet",
+  "version": "0.1.0",
+  "description": "Turkish speech in the browser: Antalia-2 Mini (text to speech) and Duyu-small (speech recognition) running on ONNX Runtime Web (WASM), with the model files wrapped in .cpet packs.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/esm/index.js",
+  "types": "./dist/types/index.d.ts",
+  "unpkg": "./dist/browser/cipetpet.min.js",
+  "jsdelivr": "./dist/browser/cipetpet.min.js",
+  "browser": "./dist/browser/cipetpet.min.js",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js"
+    },
+    "./antalia": {
+      "types": "./dist/types/antalia/index.d.ts",
+      "import": "./dist/esm/antalia/index.js"
+    },
+    "./duyu": {
+      "types": "./dist/types/duyu/index.d.ts",
+      "import": "./dist/esm/duyu/index.js"
+    },
+    "./pack": {
+      "types": "./dist/types/pack/index.d.ts",
+      "import": "./dist/esm/pack/index.js"
+    },
+    "./audio": {
+      "types": "./dist/types/audio/index.d.ts",
+      "import": "./dist/esm/audio/index.js"
+    },
+    "./worker": {
+      "types": "./dist/types/worker/index.d.ts",
+      "import": "./dist/esm/worker/index.js"
+    },
+    "./browser": {
+      "types": "./dist/types/index.d.ts",
+      "default": "./dist/browser/cipetpet.min.js"
+    },
+    "./browser/*": "./dist/browser/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "FORMAT.md",
+    "CDN.md",
+    "RELEASES.md",
+    "LICENSE",
+    "README.md",
+    "bin",
+    "dist",
+    "dist/browser"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "packs": "tsx tools/build-packs.ts",
+    "upstream": "tsx tools/fetch-upstream.ts",
+    "release:assets": "tsx tools/release-assets.ts",
+    "inspect": "tsx tools/inspect-pack.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:unit": "node --import tsx --test test/pack.test.ts test/integrity.test.ts test/ort-cdn.test.ts test/worker-client.test.ts test/audio.test.ts test/release-assets.test.ts test/pull-cli.test.ts test/fetch-upstream.test.ts",
+    "test:packs": "node --import tsx --test test/antalia.test.ts test/duyu.test.ts",
+    "serve": "node tools/serve.mjs",
+    "prepublishOnly": "node tools/check-digest.mjs && npm run typecheck && npm run build"
+  },
+  "dependencies": {
+    "onnxruntime-web": "1.30.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IsaEs/delicious-cipetpet.git",
+    "directory": "cipetpet"
+  },
+  "homepage": "https://github.com/IsaEs/delicious-cipetpet#readme",
+  "bugs": {
+    "url": "https://github.com/IsaEs/delicious-cipetpet/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "tts",
+    "stt",
+    "speech",
+    "turkish",
+    "onnx",
+    "wasm",
+    "browser",
+    "cipetpet"
+  ],
+  "bin": {
+    "cipetpet": "bin/cipetpet.mjs"
+  }
+}

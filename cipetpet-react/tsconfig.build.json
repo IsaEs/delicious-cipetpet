@@ -1,0 +1,23 @@
+{
+  // Emits dist/*.js (ESM) + dist/*.d.ts from src/. Imports of "cipetpet" are kept as-is in the output.
+  //
+  // For the declarations tsc needs the core's types: the built core package (node_modules/cipetpet ->
+  // ../cipetpet, dist/types). scripts/build.mjs refuses to run when it is missing.
+  // The core's .ts sources cannot be used here: they would be pulled into this program and emitted.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    // maps with the sources inlined: src/ is not published
+    "declarationMap": false,
+    "sourceMap": true,
+    "inlineSources": true,
+    "paths": {
+      "cipetpet": ["./node_modules/cipetpet/dist/types/index.d.ts"]
+    }
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist", "test", "example"]
+}

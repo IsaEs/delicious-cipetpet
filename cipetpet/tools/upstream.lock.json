@@ -1,0 +1,186 @@
+{
+  "format": 1,
+  "repos": [
+    {
+      "id": "antalia-mini",
+      "kind": "space",
+      "repo": "cloud0day3/antalia-mini",
+      "commit": "2c24b406fedada11bd731a2ec9f4535bfd354f03",
+      "files": [
+        {
+          "path": "assets/frontend-data.json.gz",
+          "bytes": 560861,
+          "sha256": "9f25ae01718643d5572deb11b586fb5ee2d443176990f8a39e2c073617a01453",
+          "lfs": true
+        },
+        {
+          "path": "models/cond.fp16.onnx",
+          "bytes": 315081,
+          "sha256": "664a0704b2594a6b7726ad71a314b97b050d31120eafc6bdcae1c20c055d03f1",
+          "lfs": true
+        },
+        {
+          "path": "models/cond.int8.onnx",
+          "bytes": 771040,
+          "sha256": "b361bf461341955192db7be1fa33f1580c656bd9bf91c2804e79bf9aeea44afe",
+          "lfs": true
+        },
+        {
+          "path": "models/cond.onnx",
+          "bytes": 613058,
+          "sha256": "55aa32749a8a6f8180f06694e9b36a10b2c632d8ecd250e04be6823bfc2b15ec",
+          "lfs": true
+        },
+        {
+          "path": "models/flow.fp16.onnx",
+          "bytes": 5221397,
+          "sha256": "e3b79aecb85765c7bc6dc1aa24dd3a0059b9a9c85801ed9077f7df64879400a9",
+          "lfs": true
+        },
+        {
+          "path": "models/flow.int8.onnx",
+          "bytes": 2851323,
+          "sha256": "0d7490885d4ce2d4f88377bde70c489374d5b8087391735d6914cadda64963f8",
+          "lfs": true
+        },
+        {
+          "path": "models/flow.onnx",
+          "bytes": 10288080,
+          "sha256": "0ec1fca11bad905e8fba85c2855ae08042a0787e244d7cbc525059349ffc16a5",
+          "lfs": true
+        },
+        {
+          "path": "models/manifest.json",
+          "bytes": 2165,
+          "sha256": "b8bf5ee3503ebf0313d3503dc7b6ffa12a78e98aa95b05a13942da4b9c78ac53",
+          "lfs": false,
+          "gitBlob": "3ed7164bfe6235b4b8e207cecb5bd61304cd8a26"
+        },
+        {
+          "path": "models/text.fp16.onnx",
+          "bytes": 2058376,
+          "sha256": "cfeb9fe582926b9e7052ad6d048e2473f1612c171e20f338780adacc6d0ede5e",
+          "lfs": true
+        },
+        {
+          "path": "models/text.int8.onnx",
+          "bytes": 1662683,
+          "sha256": "159f3872685790383fb920a1714e39040b96ce61eade7b45c1c43b92e1b0c975",
+          "lfs": true
+        },
+        {
+          "path": "models/text.onnx",
+          "bytes": 4048328,
+          "sha256": "6b74570a31734f9aebb121dce04a44f09c2aa0fbe0d299147c4506b4546b2ce8",
+          "lfs": true
+        },
+        {
+          "path": "models/vocoder.fp16.onnx",
+          "bytes": 7898746,
+          "sha256": "c82c830e4fc83446918af9f4f35711e4b3c361eab3a25288d117b7ff4cb24417",
+          "lfs": true
+        },
+        {
+          "path": "models/vocoder.int8.onnx",
+          "bytes": 4827420,
+          "sha256": "dc2b795e854f536aea7ffe28dbe8a1b521067c1d7fa54d84e700db2f71fad2ef",
+          "lfs": true
+        },
+        {
+          "path": "models/vocoder.onnx",
+          "bytes": 15758929,
+          "sha256": "4deec2f68e03e59b949a27c5bc4e775879625e836980cfe00d81408520dd3cfa",
+          "lfs": true
+        }
+      ]
+    },
+    {
+      "id": "duyu-small",
+      "kind": "model",
+      "repo": "KaanAydinli/Duyu-small",
+      "commit": "a9aa79751ea6e99c1e035fcb056318d5c1b67f13",
+      "files": [
+        {
+          "path": "config.json",
+          "bytes": 780,
+          "sha256": "a80c924b9a10ded830b41664d44f569b69657f5dcc9b48e73dd4603fa0c63f64",
+          "lfs": false,
+          "gitBlob": "fa83eded2f504eff8fb08bd6e816bc7537b91ab6"
+        },
+        {
+          "path": "engine.json",
+          "bytes": 540,
+          "sha256": "66a661f4234fadac70d6e7910fd700be6307f2c2691563ff75553bb3c357b7dc",
+          "lfs": false,
+          "gitBlob": "ee8ea3479f613e24ca8889a8b686954a88f4e516"
+        },
+        {
+          "path": "fbank.npz",
+          "bytes": 84344,
+          "sha256": "6d4f916ae5e170a56f73fc95f8f63b02e1d73c81b62cfd823609da9603bc7ad6",
+          "lfs": true
+        },
+        {
+          "path": "int8/decoder.onnx",
+          "bytes": 6417328,
+          "sha256": "d580c32ccfaeaf45439f8eaff6908181b3568d818a3b6c12658545ce0364cab6",
+          "lfs": true
+        },
+        {
+          "path": "int8/encoder_pass.onnx",
+          "bytes": 47593016,
+          "sha256": "2a43a3bd75ee7da8796f9c41e5b41a00f7a9518907f65c210ca9a76f2eff22bd",
+          "lfs": true
+        },
+        {
+          "path": "int8/encoder_post.onnx",
+          "bytes": 533747,
+          "sha256": "c0600b87e63596f60140c84c64836b9b40db9f3d10add2aab2067bb338b2bd03",
+          "lfs": true
+        },
+        {
+          "path": "int8/encoder_pre.onnx",
+          "bytes": 1288378,
+          "sha256": "4953211efcf5ac624be5a78f7d5a8871355c0e0c5c78c7b4de554730c023274c",
+          "lfs": true
+        },
+        {
+          "path": "passes.npz",
+          "bytes": 3600,
+          "sha256": "feacbb3296889a175d274d0e7e5f7fcb019811d51e083ce8f6209e03af0115a2",
+          "lfs": true
+        },
+        {
+          "path": "q4/decoder.onnx",
+          "bytes": 4987151,
+          "sha256": "431fe35935bdc90ad620eaf30d8d4660f5f62489021be29d78f62b89dfd2089d",
+          "lfs": true
+        },
+        {
+          "path": "q4/encoder_pass.onnx",
+          "bytes": 26891851,
+          "sha256": "5829766e2e6e4e1fe15dea896b26cadef948feffc528aff2492e48a99a3658c4",
+          "lfs": true
+        },
+        {
+          "path": "q4/encoder_post.onnx",
+          "bytes": 336467,
+          "sha256": "82eedef57a864f20af3f4e86d6379f28b0e02156166d99ecf354eb91e20d16b8",
+          "lfs": true
+        },
+        {
+          "path": "q4/encoder_pre.onnx",
+          "bytes": 1286001,
+          "sha256": "d46f4b3748e1b41776464ee347c0932f7b2ea54403ecf9045dc3af430743f3ec",
+          "lfs": true
+        },
+        {
+          "path": "spm.model",
+          "bytes": 30775,
+          "sha256": "3e2367ec7844d3ea222819bcb51a48068ae0169ef15e6b32d6cc57054b6e1205",
+          "lfs": true
+        }
+      ]
+    }
+  ]
+}

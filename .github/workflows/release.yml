@@ -1,0 +1,211 @@
+# Builds the release files (model packs, ONNX Runtime files, manifest, SHA256SUMS) from the pinned upstream models
+# and attaches them to the GitHub Release of the pushed tag vX.Y.Z. See cipetpet/RELEASES.md.
+#
+# Two jobs, so that no third-party code runs next to the token that can write releases:
+#   build    contents: read   npm ci, tests, upstream download, packs, release files -> workflow artifact
+#   publish  contents: write  no checkout, no npm: checks the artifact's file list and SHA256SUMS, then gh release
+# All actions are pinned to full commit SHAs (the version is in the comment).
+#
+# Re-run for an existing tag: Actions > release > Run workflow > tag. A release that is already published must
+# come out with the same cipetpet-release.json, otherwise the publish job stops (a published release never changes).
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and upload again, e.g. v0.1.0"
+        required: true
+        type: string
+
+# read-only everywhere; the publish job asks for more below
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  # never interpolated into a script: steps read it as an environment variable
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+        working-directory: cipetpet
+    steps:
+      - name: Check the tag name
+        working-directory: .
+        run: |
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::the tag must look like v1.2.3 (or v1.2.3-rc.1)"
+            exit 1
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+
+      # An exact Node version on purpose: the packs are gzipped with the zlib of the Node binary, so their bytes (and
+      # hashes) are only guaranteed to be the same for the same official Node build. Change it deliberately.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.23.3
+          cache: npm
+          cache-dependency-path: cipetpet/package-lock.json
+
+      # --ignore-scripts: no dependency gets to run an install script in this job (none is needed to build or test)
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Type-check
+        run: npm run typecheck
+
+      # Browser-free tests that need neither the model files nor Python: the pack format, integrity checks, the ORT
+      # URL logic, the worker client, the audio helpers, and the tests of the release tooling itself
+      # (release-assets, the `cipetpet pull` command, fetch-upstream), all against local mock servers.
+      - name: Unit tests
+        run: npm run test:unit
+
+      # The files are verified against tools/upstream.lock.json (SHA-256), so a cache hit changes nothing but the time.
+      - name: Cache upstream model files
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: cipetpet/.upstream
+          key: upstream-${{ hashFiles('cipetpet/tools/upstream.lock.json') }}
+
+      - name: Fetch the pinned upstream model files
+        run: npm run upstream
+
+      - name: Build the packs
+        run: npm run packs
+
+      # Loads the packs that were just built through ONNX Runtime in Node and synthesizes / transcribes.
+      - name: Pack smoke tests
+        run: npm run test:packs
+
+      - name: Check that the tag matches the package version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "$RELEASE_TAG" != "v$version" ]; then
+            echo "::error::the tag does not match cipetpet/package.json (version $version); bump the version or tag again"
+            exit 1
+          fi
+
+      - name: Assemble the release files
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/handoff"
+          npm run release:assets -- --out "$RUNNER_TEMP/handoff/release" --notes "$RUNNER_TEMP/handoff/release-notes.md"
+
+      - name: Check SHA256SUMS
+        working-directory: .
+        run: cd "$RUNNER_TEMP/handoff/release" && sha256sum -c SHA256SUMS
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-files
+          path: ${{ runner.temp }}/handoff
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write # create the release and upload its files; nothing else runs in this job but the steps below
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-files
+          path: handoff
+
+      # The files come from another job: look at what arrived before anything is published.
+      - name: Check the files
+        run: |
+          set -euo pipefail
+          cd handoff
+          test -f release-notes.md
+          cd release
+          n=0
+          for f in *; do
+            n=$((n + 1))
+            if [ -L "$f" ] || [ ! -f "$f" ]; then echo "::error::$f is not a regular file"; exit 1; fi
+            if ! printf '%s' "$f" | grep -Eq '^([a-z0-9][a-z0-9-]*\.cpet|ort-wasm-simd-threaded(\.asyncify)?\.(mjs|wasm)|LICENSE|NOTICE|SHA256SUMS|cipetpet-release\.json)$'; then
+              echo "::error::unexpected file $f in the release directory"
+              exit 1
+            fi
+          done
+          if [ "$n" -gt 40 ]; then echo "::error::too many files ($n)"; exit 1; fi
+          test -f cipetpet-release.json
+          test -f SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      # A published release does not change. If it exists already (a re-run), the new manifest has to be the same file;
+      # then re-uploading only repairs assets. A different manifest means different packs: stop.
+      - name: Check an existing published release
+        run: |
+          set -euo pipefail
+          if state="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>&1)"; then
+            if [ "$state" = "false" ]; then
+              mkdir -p "$RUNNER_TEMP/published"
+              gh release download "$RELEASE_TAG" --pattern cipetpet-release.json --dir "$RUNNER_TEMP/published" --clobber
+              if ! cmp -s "$RUNNER_TEMP/published/cipetpet-release.json" handoff/release/cipetpet-release.json; then
+                echo "::error::$RELEASE_TAG is already published with a different cipetpet-release.json. A published release must not change: bump the version, or delete that release first if you really mean to replace it."
+                exit 1
+              fi
+            fi
+          elif printf '%s' "$state" | grep -qi 'release not found'; then
+            echo "no release for $RELEASE_TAG yet"
+          else
+            echo "::error::cannot tell whether $RELEASE_TAG exists: $state"
+            exit 1
+          fi
+
+      - name: Create or update the GitHub Release and upload the files
+        run: |
+          set -euo pipefail
+          notes="handoff/release-notes.md"
+          flags=()
+          case "$RELEASE_TAG" in *-*) flags+=(--prerelease) ;; esac
+          created=no
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --notes-file "$notes"
+          else
+            # a draft until every file is up, so nobody sees half a release
+            gh release create "$RELEASE_TAG" --draft --verify-tag --title "$RELEASE_TAG" --notes-file "$notes" ${flags[@]+"${flags[@]}"}
+            created=yes
+          fi
+          gh release upload "$RELEASE_TAG" handoff/release/* --clobber
+          if [ "$created" = yes ]; then
+            gh release edit "$RELEASE_TAG" --draft=false
+          fi
+
+      - name: Summary
+        run: |
+          {
+            echo "### Release $RELEASE_TAG"
+            echo
+            echo '```'
+            cat handoff/release/SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
