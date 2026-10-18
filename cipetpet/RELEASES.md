@@ -490,6 +490,11 @@ both name the same workflow):
    | Environment name | leave empty (only `npm` if you added `environment: npm` to the job, see 8.1) |
    | Allowed actions | tick `npm publish` (`npm stage publish` is always allowed; `npm dist-tag` is not needed) |
 
+3a. The package must already exist on npmjs.com: the Trusted Publisher form is on the package's own Settings page, so a
+   package name that was never published has nowhere to put it, and the OIDC exchange then fails with
+   `OIDC token exchange error - package not found` (followed by `ENEEDAUTH`). For a package that was never published,
+   publish the first version once by hand (`npm publish --access public` from a maintainer's machine, with 2FA), then
+   create the Trusted Publisher entry, and re-run the failed `npm-publish` job (a version already on npm is skipped).
 4. Save. npm does **not** check the entry when you save it; a wrong value only shows up as a failed publish.
 5. Time limit: a new Trusted Publisher entry must complete its first successful publish within **2 days**, otherwise it
    expires and can no longer be used or edited (delete it and create it again). So set it up shortly before the next
