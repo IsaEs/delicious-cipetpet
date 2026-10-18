@@ -1,13 +1,25 @@
 # Builds the release files (model packs, ONNX Runtime files, manifest, SHA256SUMS) from the pinned upstream models
-# and attaches them to the GitHub Release of the pushed tag vX.Y.Z. See cipetpet/RELEASES.md.
+# and attaches them to the GitHub Release of the pushed tag vX.Y.Z; then publishes the two npm packages (cipetpet,
+# cipetpet-react) with npm TRUSTED PUBLISHING (OIDC, no npm token). See cipetpet/RELEASES.md.
 #
-# Two jobs, so that no third-party code runs next to the token that can write releases:
-#   build    contents: read   npm ci, tests, upstream download, packs, release files -> workflow artifact
-#   publish  contents: write  no checkout, no npm: checks the artifact's file list and SHA256SUMS, then gh release
+# Four jobs, so that the one credential that can do harm is only ever next to code that cannot do harm:
+#   build        contents: read   tag = both package versions + peer range, npm ci, tests, upstream download, packs, release
+#                                 files -> workflow artifact (all before the GitHub release exists)
+#   publish      contents: write  no checkout, no npm: checks the artifact's file list and SHA256SUMS, then gh release
+#   npm-pack     contents: read   npm ci, type-check, build, bin/release-digest.json from the published release,
+#                                 `npm pack` of both packages -> workflow artifact (runs the repository's code, has NO id-token)
+#   npm-publish  id-token: write  no checkout, no npm ci, no repository code: checks the two tarballs and that this run is the
+#                                 tag's own commit, then `npm publish <tarball>`
 # All actions are pinned to full commit SHAs (the version is in the comment).
 #
-# Re-run for an existing tag: Actions > release > Run workflow > tag. A release that is already published must
+# npm trusted publishing needs this file to be called release.yml: the Trusted Publisher form on npmjs.com (one per
+# package) names the workflow file. Do not rename it.
+#
+# Re-run for an existing tag: "Re-run failed jobs" on the original run, or Actions > release > Run workflow with "Use
+# workflow from" set to the TAG (not a branch) and the tag as input; npm-publish refuses to publish from anything else,
+# because the provenance it signs names the ref and commit of the run. A release that is already published must
 # come out with the same cipetpet-release.json, otherwise the publish job stops (a published release never changes).
+# A version that is already on npm is skipped by npm-publish, so a re-run never publishes twice.
 name: release
 
 on:
@@ -65,6 +77,36 @@ jobs:
           cache: npm
           cache-dependency-path: cipetpet/package-lock.json
 
+      # Before anything is built or released: a GitHub release is public and never changes, so a wrong version in either
+      # package (or a peer range of cipetpet-react that excludes this cipetpet) must stop the run here, not in the npm jobs
+      # that come after the release exists. semver is the one that comes with npm (no new dependency); if it cannot be
+      # found the step fails. A prerelease needs a peer range that allows prereleases (e.g. ^0.2.0-rc.1).
+      - name: Check that the tag matches both package versions and the peer range
+        working-directory: .
+        run: |
+          set -euo pipefail
+          node - <<'EOF'
+          const fs = require("fs");
+          const fail = (m) => { console.log("::error::" + m); process.exit(1); };
+          const tag = process.env.RELEASE_TAG;
+          // <node prefix>/bin/node -> <node prefix>/lib/node_modules/npm/node_modules/semver
+          const semverDir = require("path").join(require("path").dirname(process.execPath), "..", "lib", "node_modules", "npm", "node_modules", "semver");
+          let semver;
+          try { semver = require(semverDir); } catch (e) { fail("cannot load the semver that comes with npm (" + semverDir + ")"); }
+          const read = (f) => JSON.parse(fs.readFileSync(f, "utf8"));
+          const core = read("cipetpet/package.json");
+          const react = read("cipetpet-react/package.json");
+          for (const [dir, pkg] of [["cipetpet", core], ["cipetpet-react", react]]) {
+            if (tag !== "v" + pkg.version) fail("the tag " + tag + " does not match " + dir + "/package.json (version " + pkg.version + "); bump both versions or tag again");
+          }
+          const range = react.peerDependencies && react.peerDependencies.cipetpet;
+          if (typeof range !== "string" || semver.validRange(range) === null) fail("cipetpet-react/package.json has no valid peerDependencies.cipetpet range");
+          if (!semver.satisfies(core.version, range, { includePrerelease: true })) {
+            fail("cipetpet-react's peerDependencies.cipetpet (" + range + ") does not accept cipetpet " + core.version + "; change the range (a prerelease needs a range that names a prerelease, e.g. ^" + core.version + ")");
+          }
+          console.log("ok: tag " + tag + ", cipetpet " + core.version + ", cipetpet-react " + react.version + ", peer range " + range);
+          EOF
+
       # --ignore-scripts: no dependency gets to run an install script in this job (none is needed to build or test)
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -94,14 +136,6 @@ jobs:
       # Loads the packs that were just built through ONNX Runtime in Node and synthesizes / transcribes.
       - name: Pack smoke tests
         run: npm run test:packs
-
-      - name: Check that the tag matches the package version
-        run: |
-          version="$(node -p "require('./package.json').version")"
-          if [ "$RELEASE_TAG" != "v$version" ]; then
-            echo "::error::the tag does not match cipetpet/package.json (version $version); bump the version or tag again"
-            exit 1
-          fi
 
       - name: Assemble the release files
         run: |
@@ -209,3 +243,393 @@ jobs:
             cat handoff/release/SHA256SUMS
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------------------------------------------------------
+  # npm, part 1 of 2. Runs the repository's code (dependencies, type-check, build) and so gets NO id-token: whatever
+  # that code does, it cannot ask GitHub for the OIDC token that npm accepts as a publisher.
+  # Needs the published GitHub release: bin/release-digest.json (the trust anchor `cipetpet pull` checks the manifest
+  # against) is made from that release's own cipetpet-release.json + SHA256SUMS.
+  # ------------------------------------------------------------------------------------------------------------------
+  npm-pack:
+    name: npm-pack
+    needs: [publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read # read the repository and download the release files; no id-token, nothing is written
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Check the tag name
+        run: |
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::the tag must look like v1.2.3 (or v1.2.3-rc.1)"
+            exit 1
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+
+      # Node 24: its npm is 11.x. npm trusted publishing needs npm 11.5.1+ and Node 22.14.0+ (docs.npmjs.com/trusted-publishers);
+      # the Node 22.23.3 of the build job ships npm 10.9.9, which is too old. No dependency cache: this job makes what
+      # gets published. (The packs are not in the npm packages, so the zlib/Node-build rule of the build job does not apply.)
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.21.0
+
+      - name: Check the Node and npm versions
+        run: |
+          set -euo pipefail
+          node_v="$(node -p 'process.versions.node')"
+          npm_v="$(npm --version)"
+          echo "node $node_v, npm $npm_v"
+          # ge A B: A >= B
+          ge() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" = "$2" ]; }
+          ge "$node_v" 22.14.0 || { echo "::error::Node $node_v is older than 22.14.0, which npm trusted publishing needs"; exit 1; }
+          ge "$npm_v" 11.5.1 || { echo "::error::npm $npm_v is older than 11.5.1, which npm trusted publishing needs"; exit 1; }
+
+      # --ignore-scripts: no dependency gets to run an install script in this job. Core first: cipetpet-react needs
+      # ../cipetpet/dist to type-check and build (its devDependency is file:../cipetpet).
+      - name: cipetpet - install, type-check, build
+        working-directory: cipetpet
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          npm run typecheck
+          npm run build
+
+      - name: cipetpet-react - install, type-check, build
+        working-directory: cipetpet-react
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          npm run typecheck
+          npm run build
+
+      - name: Check that the tag matches both package versions
+        run: |
+          set -euo pipefail
+          for dir in cipetpet cipetpet-react; do
+            version="$(node -p "require('./$dir/package.json').version")"
+            if [ "$RELEASE_TAG" != "v$version" ]; then
+              echo "::error::the tag $RELEASE_TAG does not match $dir/package.json (version $version); bump both versions or tag again"
+              exit 1
+            fi
+          done
+
+      # This run's own release files (from `build`, checked by `publish`): the published release must still be the same
+      # manifest, see the digest step.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-files
+          path: ${{ runner.temp }}/built
+
+      # The digest comes from the PUBLISHED release (what users download), not from this job's own build. It is made here in
+      # bash on purpose, not by a script of the repository: a re-run (Run workflow > tag) of an older tag has to work too,
+      # and that tag's tree may not have the script. It also has to equal the manifest this run built, so a release that
+      # was edited between `publish` and this job cannot become the trust anchor of the npm package unnoticed.
+      - name: Make bin/release-digest.json from the published release
+        env:
+          GH_TOKEN: ${{ github.token }} # read-only (contents: read)
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)"
+          if [ "$draft" != "false" ]; then
+            echo "::error::the GitHub release $RELEASE_TAG is not published (draft: $draft)"
+            exit 1
+          fi
+          rel="$RUNNER_TEMP/published-release"
+          mkdir -p "$rel"
+          gh release download "$RELEASE_TAG" --pattern cipetpet-release.json --pattern SHA256SUMS --dir "$rel" --clobber
+          # the manifest has to be the one SHA256SUMS lists (exactly one line), and has to be for this version
+          line_re='^[0-9a-f]{64} [ *]cipetpet-release\.json$'
+          if [ "$(grep -Ec "$line_re" "$rel/SHA256SUMS" || true)" != "1" ]; then
+            echo "::error::SHA256SUMS of $RELEASE_TAG must have exactly one line for cipetpet-release.json"
+            exit 1
+          fi
+          listed="$(grep -E "$line_re" "$rel/SHA256SUMS" | cut -c1-64)"
+          actual="$(sha256sum "$rel/cipetpet-release.json" | cut -c1-64)"
+          if [ "$listed" != "$actual" ]; then
+            echo "::error::cipetpet-release.json of $RELEASE_TAG hashes to $actual, its SHA256SUMS says $listed"
+            exit 1
+          fi
+          built="$(sha256sum "$RUNNER_TEMP/built/release/cipetpet-release.json" | cut -c1-64)"
+          if [ "$built" != "$actual" ]; then
+            echo "::error::the published release $RELEASE_TAG has a cipetpet-release.json ($actual) that differs from the one this run built ($built); the release was changed after it was created"
+            exit 1
+          fi
+          jq -e --arg v "$version" '.format == 1 and .version == $v' "$rel/cipetpet-release.json" >/dev/null \
+            || { echo "::error::cipetpet-release.json of $RELEASE_TAG is not format 1 / version $version"; exit 1; }
+          jq -n --arg v "$version" --arg s "$actual" '{format: 1, version: $v, manifestSha256: $s}' > "$RUNNER_TEMP/release-digest.json"
+          cat "$RUNNER_TEMP/release-digest.json"
+          cd cipetpet
+          # normally the file is not in git (cipetpet/.gitignore); if someone commits it, it has to be the right one
+          if git ls-files --error-unmatch bin/release-digest.json >/dev/null 2>&1; then
+            if ! cmp -s "$RUNNER_TEMP/release-digest.json" bin/release-digest.json; then
+              echo "::error::bin/release-digest.json is committed but differs from the published release's manifest digest"
+              exit 1
+            fi
+          fi
+          cp "$RUNNER_TEMP/release-digest.json" bin/release-digest.json
+          node tools/check-digest.mjs
+
+      # `npm pack` never runs prepublishOnly (and --ignore-scripts skips prepack/prepare): everything it would do was done above.
+      - name: Pack both packages
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/npm-pack"
+          mkdir -p "$out"
+          version="${RELEASE_TAG#v}"
+          (cd cipetpet && npm pack --ignore-scripts --pack-destination "$out")
+          (cd cipetpet-react && npm pack --ignore-scripts --pack-destination "$out")
+          cd "$out"
+          ls -l
+          # exactly the two expected files, and the things that must be inside
+          test "$(ls | sort | tr '\n' ' ')" = "cipetpet-$version.tgz cipetpet-react-$version.tgz "
+          core="$(tar -tf "cipetpet-$version.tgz")"
+          react="$(tar -tf "cipetpet-react-$version.tgz")"
+          for want in package/bin/release-digest.json package/bin/cipetpet.mjs package/dist/esm/index.js package/dist/browser/cipetpet.min.js; do
+            grep -Fxq -- "$want" <<<"$core" || { echo "::error::cipetpet-$version.tgz does not contain $want"; exit 1; }
+          done
+          grep -Fxq -- package/dist/index.js <<<"$react" || { echo "::error::cipetpet-react-$version.tgz does not contain package/dist/index.js"; exit 1; }
+          sha256sum -- *.tgz > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: npm-tarballs
+          path: ${{ runner.temp }}/npm-pack
+          if-no-files-found: error
+          retention-days: 3
+
+  # ------------------------------------------------------------------------------------------------------------------
+  # npm, part 2 of 2. The only job with id-token: write, so the only one npm accepts as the trusted publisher. It runs
+  # NO repository code: no checkout, no npm ci, no build, no lifecycle script (npm does not run the scripts of a
+  # tarball it publishes). It publishes exactly the two .tgz files that npm-pack made, after checking them.
+  #
+  # No npm token anywhere (no NODE_AUTH_TOKEN, no NPM_TOKEN, no secret): npm exchanges this job's GitHub OIDC token for a
+  # short-lived publish token. The Trusted Publisher form for each package on npmjs.com must name: owner IsaEs,
+  # repository delicious-cipetpet, workflow filename release.yml, and no environment (see RELEASES.md, 8.3).
+  # To require a manual approval before anything is published, create the GitHub environment `npm` with required
+  # reviewers, add the line `environment: npm` to this job, and put `npm` into the environment field of both forms.
+  # ------------------------------------------------------------------------------------------------------------------
+  npm-publish:
+    name: npm-publish
+    needs: [publish, npm-pack]
+    runs-on: ubuntu-latest # trusted publishing works only on GitHub-hosted runners, not self-hosted ones
+    timeout-minutes: 40
+    permissions:
+      id-token: write # the OIDC token npm exchanges for a publish token
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check the tag name
+        run: |
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::the tag must look like v1.2.3 (or v1.2.3-rc.1)"
+            exit 1
+          fi
+
+      # No registry-url, no cache, no package.json to read: setup-node only installs Node and npm here. (The docs' example
+      # sets registry-url, which makes setup-node export a placeholder NODE_AUTH_TOKEN; npm's default registry is the same
+      # URL, and the OIDC exchange does not depend on it, so it is left out to keep every token variable out of the job.)
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.21.0
+
+      - name: Check Node, npm and the OIDC permission
+        run: |
+          set -euo pipefail
+          node_v="$(node -p 'process.versions.node')"
+          npm_v="$(npm --version)"
+          echo "node $node_v, npm $npm_v"
+          ge() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" = "$2" ]; }
+          ge "$node_v" 22.14.0 || { echo "::error::Node $node_v is older than 22.14.0, which npm trusted publishing needs"; exit 1; }
+          ge "$npm_v" 11.5.1 || { echo "::error::npm $npm_v is older than 11.5.1, which npm trusted publishing needs"; exit 1; }
+          # GitHub sets this only when the job has id-token: write
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::this job has no id-token: write permission, npm cannot get an OIDC token"
+            exit 1
+          fi
+          # trusted publishing is tokenless: a token variable here would only hide a misconfiguration
+          for v in NODE_AUTH_TOKEN NPM_TOKEN NPM_ID_TOKEN; do
+            if [ -n "${!v:-}" ]; then echo "::error::$v is set; this job must publish without an npm token"; exit 1; fi
+          done
+          envnames="$(env | cut -d= -f1)"
+          if [ -n "$(grep -Ei '^npm_config_.*(authtoken|_auth)' <<<"$envnames" || true)" ]; then echo "::error::an npm auth config variable is set"; exit 1; fi
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-tarballs
+          path: tarballs
+
+      # The files come from another job: look at what arrived before anything is published.
+      - name: Check the files
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          cd tarballs
+          expected="$(printf '%s\n' "cipetpet-$version.tgz" "cipetpet-react-$version.tgz" SHA256SUMS | sort)"
+          actual="$(find . -mindepth 1 -printf '%P\n' | sort)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::unexpected content in the npm-tarballs artifact. Expected:"
+            echo "$expected"
+            echo "Found:"
+            echo "$actual"
+            exit 1
+          fi
+          for f in *; do
+            if [ -L "$f" ] || [ ! -f "$f" ]; then echo "::error::$f is not a regular file"; exit 1; fi
+          done
+          for f in *.tgz; do
+            printf '%s' "$f" | grep -Eq '^[a-z0-9.-]+\.tgz$' || { echo "::error::odd file name $f"; exit 1; }
+            if [ "$(stat -c %s "$f")" -gt 52428800 ]; then echo "::error::$f is larger than 50 MiB"; exit 1; fi
+          done
+          # SHA256SUMS must name exactly the two tarballs (sha256sum -c alone would accept a shorter list)
+          names="$(awk '{ print $2 }' SHA256SUMS | sort)"
+          if [ "$names" != "$(printf '%s\n' "cipetpet-$version.tgz" "cipetpet-react-$version.tgz" | sort)" ]; then
+            echo "::error::SHA256SUMS must list exactly cipetpet-$version.tgz and cipetpet-react-$version.tgz"
+            exit 1
+          fi
+          sha256sum -c SHA256SUMS
+
+      # Read name and version out of the tarballs themselves: that is what npm will publish, whatever the file is called.
+      - name: Check what is inside the tarballs
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          repo_url="https://github.com/$GITHUB_REPOSITORY"
+          cd tarballs
+          for name in cipetpet cipetpet-react; do
+            f="$name-$version.tgz"
+            # only regular files and folders under package/, no absolute or .. paths
+            types="$(tar -tvf "$f" | cut -c1 | sort -u | tr -d '\n')"
+            case "$types" in -|d|-d|d-) ;; *) echo "::error::$f contains a link or a special file (entry types: $types)"; exit 1 ;; esac
+            entries="$(tar -tf "$f")"
+            if [ -n "$(grep -Ev '^package/' <<<"$entries" || true)" ]; then echo "::error::$f has entries outside package/"; exit 1; fi
+            if [ -n "$(grep -E '(^|/)\.\.(/|$)' <<<"$entries" || true)" ]; then echo "::error::$f has a .. path"; exit 1; fi
+            pkg="$(tar -xOf "$f" package/package.json)"
+            got_name="$(printf '%s' "$pkg" | jq -er .name)"
+            got_version="$(printf '%s' "$pkg" | jq -er .version)"
+            got_repo="$(printf '%s' "$pkg" | jq -er .repository.url | sed -e 's#^git+##' -e 's#\.git$##')"
+            if [ "$got_name" != "$name" ]; then echo "::error::$f holds package \"$got_name\", expected \"$name\""; exit 1; fi
+            if [ "$got_version" != "$version" ]; then echo "::error::$f holds version $got_version, the tag is $RELEASE_TAG"; exit 1; fi
+            # the registry compares this with the repository the workflow runs in (case-sensitive)
+            if [ "$got_repo" != "$repo_url" ]; then echo "::error::$f: repository.url is $got_repo, expected $repo_url"; exit 1; fi
+            # npm applies the tarball's own publishConfig (any npm setting: registry, tag, ...) unless the command line sets
+            # the same key. Only the access level is allowed, so a tarball cannot steer where the OIDC token goes.
+            if ! printf '%s' "$pkg" | jq -e '(.publishConfig // {}) == {"access": "public"}' >/dev/null; then
+              echo "::error::$f: publishConfig must be exactly {\"access\": \"public\"}"
+              exit 1
+            fi
+            echo "ok: $name $got_version"
+          done
+          tar -xOf "cipetpet-$version.tgz" package/bin/release-digest.json \
+            | jq -e --arg v "$version" '.format == 1 and .version == $v and (.manifestSha256 | test("^[0-9a-f]{64}$"))' >/dev/null \
+            || { echo "::error::cipetpet-$version.tgz has no valid bin/release-digest.json for $version"; exit 1; }
+
+      # Order: cipetpet, then cipetpet-react (which has it as a peer dependency). A version that is already on the registry
+      # is skipped, so re-running the workflow for a tag is safe. Any answer other than 200 / 404 stops the job.
+      # `npm publish <tarball>` runs no lifecycle script of anything. Provenance is automatic with trusted publishing
+      # (public repository, public package); --provenance is added so that npm fails instead of publishing without it.
+      #
+      # --registry: npm applies the tarball's own publishConfig unless the same key is on the command line, and the OIDC
+      # token is sent to the registry npm picked; the registry is therefore fixed here (publishConfig is checked above too).
+      # --loglevel verbose: npm reports every failure of the OIDC exchange (no id-token, no matching Trusted Publisher form,
+      # wrong "allowed actions", expired entry) ONLY at verbose level and then stops with a plain ENEEDAUTH; the 'oidc' lines
+      # are the only explanation. npm redacts tokens in its log; look at the first real log for anything that should not be there.
+      - name: Publish to npm
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          cd tarballs
+          mkdir -p "$RUNNER_TEMP/npm-published"
+          # 1. what is missing on the registry? (nothing is published yet)
+          todo=()
+          for name in cipetpet cipetpet-react; do
+            if ! code="$(curl -sS -o /dev/null -w '%{http_code}' --retry 3 --retry-delay 5 --max-time 30 "https://registry.npmjs.org/$name/$version")"; then
+              echo "::error::cannot ask the npm registry about $name@$version"
+              exit 1
+            fi
+            case "$code" in
+              200) echo "$name@$version is already on npm: skipping" ;;
+              404) echo "$name@$version is not on npm yet"; todo+=("$name") ;;
+              *)
+                echo "::error::the npm registry answered HTTP $code for $name@$version (expected 200 or 404); not publishing"
+                exit 1 ;;
+            esac
+          done
+          if [ "${#todo[@]}" -eq 0 ]; then echo "nothing to publish"; exit 0; fi
+          # 2. the provenance npm signs names $GITHUB_REF and $GITHUB_SHA of THIS run, so they have to be the tag and its
+          #    commit. A run started with "Run workflow" from a branch (main) has the branch there: it could skip versions
+          #    that are on npm, but it must not publish. (The tarballs were built from the tag in any case.)
+          if ! refs="$(GIT_TERMINAL_PROMPT=0 git ls-remote "https://github.com/$GITHUB_REPOSITORY" "refs/tags/$RELEASE_TAG" "refs/tags/$RELEASE_TAG^{}")"; then
+            echo "::error::cannot read the tag $RELEASE_TAG from https://github.com/$GITHUB_REPOSITORY"
+            exit 1
+          fi
+          peeled="$(awk -v r="refs/tags/$RELEASE_TAG^{}" '$2 == r { print $1 }' <<<"$refs")"
+          plain="$(awk -v r="refs/tags/$RELEASE_TAG" '$2 == r { print $1 }' <<<"$refs")"
+          tag_sha="${peeled:-$plain}"
+          if ! printf '%s' "$tag_sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::the tag $RELEASE_TAG was not found in $GITHUB_REPOSITORY"
+            exit 1
+          fi
+          if [ "$tag_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::this run is for $GITHUB_REF at $GITHUB_SHA, but $RELEASE_TAG is at $tag_sha. The provenance of the published version would name the wrong commit. Re-run the failed jobs of the original tag run, or use Run workflow with 'Use workflow from' set to the tag $RELEASE_TAG (not a branch)."
+            exit 1
+          fi
+          echo "source ok: $RELEASE_TAG is $tag_sha, this run is $GITHUB_REF at $GITHUB_SHA"
+          # 3. publish
+          for name in "${todo[@]}"; do
+            f="$name-$version.tgz"
+            args=(publish "./$f" --access public --provenance --registry https://registry.npmjs.org/ --loglevel verbose)
+            # a prerelease must not become the "latest" version
+            case "$version" in *-*) args+=(--tag next) ;; esac
+            npm "${args[@]}"
+            : > "$RUNNER_TEMP/npm-published/$name"
+          done
+
+      # The registry can take several minutes to show a new version (cipetpet-0.1.0 took about 10). A version that
+      # never shows up is a warning (the publish itself succeeded); a different file under that version is an error.
+      - name: Check the registry
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          cd tarballs
+          for name in cipetpet cipetpet-react; do
+            f="$name-$version.tgz"
+            ours="sha512-$(openssl dgst -sha512 -binary "$f" | openssl base64 -A)"
+            found=no
+            for i in $(seq 1 30); do
+              if doc="$(curl -sS --fail --max-time 30 "https://registry.npmjs.org/$name/$version")"; then found=yes; break; fi
+              sleep 30
+            done
+            if [ "$found" != yes ]; then
+              echo "::warning::$name@$version is not visible on the registry yet (checked for 15 minutes); look at https://www.npmjs.com/package/$name"
+              continue
+            fi
+            theirs="$(printf '%s' "$doc" | jq -r '.dist.integrity // ""')"
+            if [ "$theirs" != "$ours" ]; then
+              if [ -e "$RUNNER_TEMP/npm-published/$name" ]; then
+                echo "::error::$name@$version on the registry has integrity $theirs, the tarball published here has $ours"
+                exit 1
+              fi
+              echo "::warning::$name@$version was published earlier with another tarball ($theirs), this run packed $ours; nothing was changed"
+            fi
+            if printf '%s' "$doc" | jq -e '.dist.attestations.provenance' >/dev/null; then
+              prov="provenance attached"
+            else
+              prov="NO provenance attestation"
+              echo "::warning::$name@$version has no provenance attestation on the registry"
+            fi
+            echo "$name@$version: $prov"
+            echo "- [$name@$version](https://www.npmjs.com/package/$name/v/$version): $prov" >> "$GITHUB_STEP_SUMMARY"
+          done

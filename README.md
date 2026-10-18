@@ -1,5 +1,7 @@
 # delicious-cipetpet
 
+"Herseyin bir makami var. Bunlar cipetpet ama lezzetli cipetpet fakat sadece amatoru eglendirir."
+
 Turkish speech in the browser, fully local (no server inference):
 
 * **Antalia-2 Mini** – text to speech, 48 kHz
