@@ -117,7 +117,7 @@ export function useModel<K extends ModelKind>(kind: K, options: ModelHookOptions
   };
 }
 
-/** The text-to-speech model (Antalia-2 Mini) with its loading state. */
+/** The text-to-speech model with its loading state: Antalia-2 Mini or EMA Lightning, whichever the pack holds. */
 export function useAntalia(options?: ModelHookOptions): ModelHandle<TtsModel> {
   return useModel("tts", options);
 }

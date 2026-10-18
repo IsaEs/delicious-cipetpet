@@ -1,10 +1,20 @@
-// Model id: free text, plus OpenRouter's public list, fetched only when the user opens it.
+// Model id: free text, plus the provider's list (OpenRouter's public index, the demo server's /api/models, or a direct
+// endpoint's GET /models), fetched only when the user opens it.
 
 import { useEffect, useId, useMemo, useRef, useState, type ReactElement } from "react";
-import { loadModels, type ModelList } from "../llm/models.ts";
+import { loadModelsFrom, type ModelList, type ModelSource } from "../llm/models.ts";
 import { useT } from "./i18n.ts";
 
-export function ModelPicker({ value, defaultModel, onChange }: { value: string; defaultModel: string; onChange(v: string): void }): ReactElement {
+export interface ModelPickerProps {
+  value: string;
+  /** the provider's default ("" = it has none, a model must be typed or picked) */
+  defaultModel: string;
+  /** where the list comes from (remount the picker, e.g. with a `key`, when it changes) */
+  source: ModelSource;
+  onChange(v: string): void;
+}
+
+export function ModelPicker({ value, defaultModel, source, onChange }: ModelPickerProps): ReactElement {
   const t = useT();
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -12,11 +22,14 @@ export function ModelPicker({ value, defaultModel, onChange }: { value: string; 
   const [query, setQuery] = useState("");
   const panel = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
+  // read when the list is fetched: a new object per render must not re-run the effect (it focuses the search box)
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
 
   useEffect(() => {
     if (!open) return;
     let live = true;
-    if (!list) loadModels().then((l) => live && setList(l));
+    if (!list) loadModelsFrom(sourceRef.current).then((l) => live && setList(l));
     search.current?.focus();
     const onDoc = (e: MouseEvent) => {
       if (panel.current && !panel.current.parentElement?.contains(e.target as Node)) setOpen(false);
@@ -26,6 +39,11 @@ export function ModelPicker({ value, defaultModel, onChange }: { value: string; 
       live = false;
       document.removeEventListener("mousedown", onDoc);
     };
+  }, [open, list]);
+  // a list that could not be fetched is asked for again the next time the picker opens (a key typed since, a server
+  // started since)
+  useEffect(() => {
+    if (!open && list && !list.live) setList(null);
   }, [open, list]);
 
   const shown = useMemo(() => {
@@ -47,7 +65,8 @@ export function ModelPicker({ value, defaultModel, onChange }: { value: string; 
           type="text"
           spellCheck={false}
           autoComplete="off"
-          placeholder={defaultModel}
+          placeholder={defaultModel || t("settings.modelRequired")}
+          aria-invalid={!value && !defaultModel ? true : undefined}
           value={value}
           onChange={(e) => onChange(e.currentTarget.value)}
         />
@@ -55,7 +74,7 @@ export function ModelPicker({ value, defaultModel, onChange }: { value: string; 
           {t("settings.modelBrowse")}
         </button>
       </div>
-      <p className="field__hint">{t("settings.modelDefault", { model: defaultModel })}</p>
+      <p className={`field__hint${!value && !defaultModel ? " is-warning" : ""}`}>{defaultModel ? t("settings.modelDefault", { model: defaultModel }) : t("settings.modelNone")}</p>
       {open && (
         <div
           ref={panel}
@@ -78,7 +97,9 @@ export function ModelPicker({ value, defaultModel, onChange }: { value: string; 
             onChange={(e) => setQuery(e.currentTarget.value)}
           />
           {!list && <p className="field__hint">{t("settings.modelLoading")}</p>}
-          {list && !list.live && <p className="field__hint is-warning">{t("settings.modelOffline")}</p>}
+          {list && !list.live && (
+            <p className="field__hint is-warning">{list.error ? t("settings.modelError", { message: list.error }) : t("settings.modelOffline")}</p>
+          )}
           <ul className="picker__list" role="listbox" aria-label={t("settings.model")}>
             {shown.map((m) => (
               <li key={m.id} role="option" aria-selected={m.id === (value || defaultModel)}>

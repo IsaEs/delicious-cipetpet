@@ -20,8 +20,8 @@ export function App(): ReactElement {
   }, [settings.uiLang, i18n]);
 
   const voice = useMemo(
-    () => ({ sttPrecision: settings.sttPrecision, useWorker: settings.useWorker && workerSupported(), integrity: server.packs }),
-    [settings.sttPrecision, settings.useWorker, server.packs],
+    () => ({ ttsModel: settings.ttsModel, sttPrecision: settings.sttPrecision, useWorker: settings.useWorker && workerSupported(), integrity: server.packs }),
+    [settings.ttsModel, settings.sttPrecision, settings.useWorker, server.packs],
   );
 
   // The model options include the pack digests from /api/config; a change of options reloads the models, so the

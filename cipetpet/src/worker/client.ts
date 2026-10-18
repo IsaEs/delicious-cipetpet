@@ -1,5 +1,6 @@
 import type { LoadOptions, ModelInfo, SpeechChunk, SynthesisOptions, SynthesisResult, TranscribeOptions, TranscriptionResult } from "../types.js";
 import type { PackSource } from "../pack/types.js";
+import type { TtsModelId } from "../tts.js";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 
 export interface WorkerOptions extends LoadOptions {
@@ -37,6 +38,18 @@ export interface AntaliaWorker {
   stream(text: string, opts?: SynthesisOptions): AsyncGenerator<SpeechChunk, void, undefined>;
   dispose(): Promise<void>;
 }
+
+export interface EmaWorker {
+  readonly info: ModelInfo;
+  readonly defaults: Readonly<{ speed: number }>;
+  normalize(text: string): Promise<string>;
+  synthesize(text: string, opts?: SynthesisOptions): Promise<SynthesisResult>;
+  stream(text: string, opts?: SynthesisOptions): AsyncGenerator<SpeechChunk, void, undefined>;
+  dispose(): Promise<void>;
+}
+
+/** A text-to-speech model in a worker: `info.id` is "antalia-mini" or "ema-lightning". */
+export type TtsWorker = AntaliaWorker | EmaWorker;
 
 export interface DuyuWorker {
   readonly info: ModelInfo;
@@ -273,18 +286,21 @@ function prepareLoad(source: WorkerSource, loadOptions: Record<string, unknown>)
   return { source: typeof source === "string" || source instanceof URL ? absoluteUrl(source) : source, options };
 }
 
+type TtsDefaults = AntaliaWorker["defaults"] | EmaWorker["defaults"];
+
 async function createClient(
   kind: "tts" | "stt",
   source: WorkerSource,
   options: WorkerOptions = {},
-): Promise<{ client: Client; info: ModelInfo; defaults?: AntaliaWorker["defaults"] }> {
+  model?: TtsModelId,
+): Promise<{ client: Client; info: ModelInfo; defaults?: TtsDefaults }> {
   const { worker: _worker, signal, onProgress, ...rest } = options;
   const load = prepareLoad(source, rest);
   const { worker, release, shimmedFor } = makeWorker(options.worker);
   const client = new Client(worker, release, shimmedFor);
   try {
-    const loaded = await client.request<{ info: ModelInfo; defaults?: AntaliaWorker["defaults"] }>(
-      { type: "load", kind, source: load.source, options: load.options },
+    const loaded = await client.request<{ info: ModelInfo; defaults?: TtsDefaults }>(
+      { type: "load", kind, source: load.source, options: load.options, ...(model ? { model } : {}) },
       signal,
       onProgress,
     );
@@ -296,11 +312,23 @@ async function createClient(
 }
 
 export async function createAntaliaWorker(source: WorkerSource, opts: WorkerOptions = {}): Promise<AntaliaWorker> {
-  const { client, info, defaults } = await createClient("tts", source, opts);
+  return ttsClient(await createClient("tts", source, opts, "antalia-mini")) as AntaliaWorker;
+}
+
+export async function createEmaWorker(source: WorkerSource, opts: WorkerOptions = {}): Promise<EmaWorker> {
+  return ttsClient(await createClient("tts", source, opts, "ema-lightning")) as EmaWorker;
+}
+
+/** Whichever text-to-speech model the pack holds (the worker reads the pack's header), in a worker. */
+export async function createTtsWorker(source: WorkerSource, opts: WorkerOptions = {}): Promise<TtsWorker> {
+  return ttsClient(await createClient("tts", source, opts));
+}
+
+function ttsClient({ client, info, defaults }: { client: Client; info: ModelInfo; defaults?: TtsDefaults }): TtsWorker {
   let disposed: Promise<void> | undefined;
   return {
     info,
-    defaults: defaults!,
+    defaults: defaults as AntaliaWorker["defaults"],
     normalize: (text) => client.request<string>({ type: "call", method: "normalize", args: [text] }),
     synthesize: (text, options) =>
       client.request<SynthesisResult>(

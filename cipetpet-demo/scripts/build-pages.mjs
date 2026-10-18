@@ -3,13 +3,14 @@
 //
 //   pages/index.html, assets/…   the built app (scripts/build.mjs)
 //   pages/coi-sw.js              service worker that adds COOP/COEP, so WASM threads work (static/coi-sw.js)
-//   pages/packs/*.cpet           the model packs, pulled from this project's GitHub Release (cipetpet pull)
+//   pages/packs/*.cpet           the model packs, pulled from this project's GitHub Release (cipetpet pull); the
+//                                EMA Lightning pack too when the source has it (it is built locally: npm run packs)
 //   pages/ort/ort-wasm-simd-threaded.{mjs,wasm}   ONNX Runtime's files
 //   pages/api/config             what the demo server would answer: {proxy:false, defaultModel, packs:{file: integrity}}
 //   pages/LICENSE, NOTICE        licences and credits that came with the release
 //
 // There is no chat proxy on a static host and no key anywhere: the page runs in echo mode, or the visitor
-// types their own OpenRouter key (direct mode, kept in their browser only).
+// types their own OpenRouter key or adds an OpenAI-compatible API (direct mode, kept in their browser only).
 //
 //   node scripts/build-pages.mjs [--packs-dir DIR] [--tag vX.Y.Z] [--out DIR] [--no-build]
 //
@@ -42,6 +43,9 @@ const tag = arg("--tag") ?? `v${coreVersion}`;
 
 /** the packs the demo can ask for: the TTS pack and both STT precisions (see src/voice/cipetpet.ts) */
 const PACKS = ["antalia-mini-mixed", "duyu-small-int8", "duyu-small-q4"];
+/** packs the page can also use, copied when the source has them (EMA Lightning has no pinned upstream yet, so a
+ * release may not carry it); the page marks a voice whose pack is missing */
+const OPTIONAL_PACKS = ["ema-lightning-fp32"];
 
 const sri = (file) => `sha256-${createHash("sha256").update(readFileSync(file)).digest("base64")}`;
 const mb = (n) => `${(n / 1048576).toFixed(2)} MiB`;
@@ -60,6 +64,13 @@ function sourceFiles() {
   }
   console.log(`pulling the release ${tag} (files already in .pages-cache/ are kept after their hash is checked)`);
   execFileSync(process.execPath, [join(CORE, "bin", "cipetpet.mjs"), "pull", "--dir", CACHE, "--tag", tag, "--packs", PACKS.join(",")], { stdio: "inherit" });
+  for (const name of OPTIONAL_PACKS) {
+    try {
+      execFileSync(process.execPath, [join(CORE, "bin", "cipetpet.mjs"), "pull", "--dir", CACHE, "--tag", tag, "--packs", name], { stdio: "pipe" });
+    } catch {
+      console.log(`${name}: not in the release ${tag}; the page offers it but marks it as missing`);
+    }
+  }
   return { packs: (name) => join(CACHE, `${name}.cpet`), ort: (file) => join(CACHE, "ort", file), doc: (file) => (existsSync(join(CACHE, file)) ? join(CACHE, file) : null), from: `GitHub release ${tag}` };
 }
 
@@ -91,6 +102,12 @@ for (const name of PACKS) {
   copy(from, join(out, "packs", `${name}.cpet`));
   integrity[`${name}.cpet`] = sri(from);
 }
+for (const name of OPTIONAL_PACKS) {
+  const from = src.packs(name);
+  if (!existsSync(from)) continue;
+  copy(from, join(out, "packs", `${name}.cpet`));
+  integrity[`${name}.cpet`] = sri(from);
+}
 for (const file of ORT_FILES) {
   const from = src.ort(file);
   if (!existsSync(from)) throw new Error(`missing ${from} (${src.from})`);
@@ -101,10 +118,11 @@ for (const file of DOC_FILES) {
   if (from) copy(from, join(out, file));
 }
 
-// what the demo server would answer; the page treats "proxy: false" as "no key here": echo mode + bring your own key
+// what the demo server would answer; the page treats "proxy: false" as "no provider here": echo mode + bring your own
+// key (OpenRouter or any OpenAI-compatible API)
 const { DEFAULT_MODEL } = await import("../server/server.mjs");
 mkdirSync(join(out, "api"), { recursive: true });
-writeFileSync(join(out, "api", "config"), `${JSON.stringify({ proxy: false, defaultModel: DEFAULT_MODEL, packs: integrity })}\n`);
+writeFileSync(join(out, "api", "config"), `${JSON.stringify({ proxy: false, defaultModel: DEFAULT_MODEL, provider: null, providers: [], packs: integrity })}\n`);
 
 // summary
 const files = [];

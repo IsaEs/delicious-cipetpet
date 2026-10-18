@@ -1,6 +1,6 @@
 # cipetpet
 
-Core library of [delicious-cipetpet](https://github.com/IsaEs/delicious-cipetpet): local Turkish TTS (Antalia-2 Mini) and STT (Duyu-small) in the browser.
+Core library of [delicious-cipetpet](https://github.com/IsaEs/delicious-cipetpet): local Turkish TTS (Antalia-2 Mini, EMA Lightning) and STT (Duyu-small) in the browser.
 
 ## Install
 
@@ -38,6 +38,15 @@ npm run release:assets # packs + ORT files + SHA256SUMS -> release/ (what a GitH
 
 `.upstream/` (gitignored) is where `npm run packs` looks for the upstream model folders by default.
 
+**EMA Lightning** has no pinned upstream with ONNX files: its pack is built from
+[ema-lightning-web](https://github.com/canberk7/ema-lightning)'s browser export (`web/models/` from
+`web/export_onnx.py`, and normalizer-tr compiled to `web/normalizer/pkg/normalizer_tr_wasm_bg.wasm`). `npm run packs`
+picks it up from `../ema-lightning-web/web` when that folder exists, and skips it otherwise:
+
+```sh
+npm run packs -- --only ema-lightning-fp32 --ema ../ema-lightning-web/web   # -> packs/ema-lightning-fp32.cpet (~34 MB)
+```
+
 ## Quick start (core)
 
 ```ts
@@ -62,13 +71,28 @@ const result = await stt.transcribe(float32Mono16k);
 console.log(result.text);
 ```
 
+EMA Lightning has the same API as `AntaliaMini` (`synthesize`, `stream`, `normalize`, `dispose`; `SynthesisOptions` in,
+`SynthesisResult` / `SpeechChunk` out). Its `speed` goes from 0.25 to 4, it has no `steps` / `cfg` / `temperature`
+(they are accepted and ignored), and its text goes through normalizer-tr (numbers, dates, money, units read aloud).
+Its stream starts with one second of audio, then up to four seconds per chunk. `loadTextToSpeech` loads whichever of
+the two a pack holds:
+
+```ts
+import { EmaLightning, loadTextToSpeech } from "cipetpet";
+
+const ema = await EmaLightning.load("/packs/ema-lightning-fp32.cpet", runtime);
+const tts = await loadTextToSpeech(packUrl, runtime);   // AntaliaMini or EmaLightning, by the pack's header (tts.info.id)
+```
+
 Run inference off the main thread:
 
 ```ts
-import { createAntaliaWorker, createDuyuWorker } from "cipetpet";
+import { createAntaliaWorker, createDuyuWorker, createEmaWorker, createTtsWorker } from "cipetpet";
 
 const tts = await createAntaliaWorker("/packs/antalia-mini-int8.cpet", { wasmPaths: "/ort/" });
 const stt = await createDuyuWorker("/packs/duyu-small-int8.cpet", { wasmPaths: "/ort/" });
+const ema = await createEmaWorker("/packs/ema-lightning-fp32.cpet", { wasmPaths: "/ort/" });
+const any = await createTtsWorker(packUrl, { wasmPaths: "/ort/" });   // whichever TTS model the pack holds
 ```
 
 The worker file is resolved as `new URL("./worker.js", import.meta.url)`. If your bundler does not pick it up,
@@ -108,6 +132,6 @@ pack; `--hash-names` adds immutable `<name>.<hash>.cpet` copies). jsDelivr serve
 Which host for what, the headers each one sends (checked with curl), copy-paste CORS configs, the COOP/COEP setup,
 and complete pages for TTS, STT and the worker clients: [CDN.md](./CDN.md).
 
-Subpath exports: `cipetpet/antalia`, `cipetpet/duyu`, `cipetpet/pack`, `cipetpet/audio`, `cipetpet/worker`, `cipetpet/browser` (the CDN bundle), `cipetpet/browser/*`.
+Subpath exports: `cipetpet/antalia`, `cipetpet/ema`, `cipetpet/duyu`, `cipetpet/pack`, `cipetpet/audio`, `cipetpet/worker`, `cipetpet/browser` (the CDN bundle), `cipetpet/browser/*`.
 
 Docs, packs, deployment notes and React wrapper: https://github.com/IsaEs/delicious-cipetpet#readme

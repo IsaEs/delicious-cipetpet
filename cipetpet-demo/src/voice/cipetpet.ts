@@ -3,25 +3,28 @@
 // their API, this file is the one to reconcile.
 //
 // * Model loading: cipetpet-react's <CipetpetProvider> (app-wide pack + runtime options, preload) and
-//   useAntalia / useDuyu (status, progress, the shared model instance, in-thread or in a Web Worker).
+//   useAntalia / useDuyu (status, progress, the shared model instance, in-thread or in a Web Worker). The "tts"
+//   model is whichever text-to-speech model its pack holds: Antalia-2 Mini or EMA Lightning (the settings pick the pack).
 // * Playback: one core StreamPlayer on an AudioContext created / resumed in the first user gesture.
 // * Microphone: the core's MicRecorder (16 kHz mono out, RMS level callback for the meter and the VAD).
 
 import { createElement, useMemo, type ReactElement, type ReactNode } from "react";
 import { MicRecorder, StreamPlayer } from "cipetpet";
 import { CipetpetProvider, useAntalia, useDuyu, type ModelOptions, type SttModel, type TtsModel } from "cipetpet-react";
-import type { DuyuPrecision } from "./languages.ts";
+import type { DuyuPrecision, TtsModelChoice } from "./languages.ts";
 import { STT_SAMPLE_RATE, type AudioOut, type MicInput, type MicSession, type SttEngine, type TtsEngine } from "./types.ts";
 
 /** where the server exposes the packs and onnxruntime-web's files (server/server.mjs) */
 export const PACKS_URL = "/packs/";
 export const ORT_URL = "/ort/";
 
-export const TTS_PACK = "antalia-mini-mixed.cpet";
+export const TTS_PACKS: Record<TtsModelChoice, string> = { antalia: "antalia-mini-mixed.cpet", ema: "ema-lightning-fp32.cpet" };
+export const ttsPack = (m: TtsModelChoice): string => TTS_PACKS[m];
 export const sttPack = (p: DuyuPrecision): string => `duyu-small-${p}.cpet`;
 /** approximate download sizes, for the UI ("first load downloads ~23 MB + ~56 MB") */
 export const PACK_MB: Record<string, number> = {
-  [TTS_PACK]: 23,
+  [TTS_PACKS.antalia]: 23,
+  [TTS_PACKS.ema]: 34,
   [sttPack("int8")]: 56,
   [sttPack("q4")]: 34,
 };
@@ -31,6 +34,8 @@ const WORKER_URL: string | null = typeof __CIPETPET_WORKER_URL__ === "string" ? 
 export const workerSupported = (): boolean => WORKER_URL !== null && typeof Worker !== "undefined";
 
 export interface VoiceConfig {
+  /** the text-to-speech model; the pack's header decides which class loads it */
+  ttsModel: TtsModelChoice;
   sttPrecision: DuyuPrecision;
   /** run both models in Web Workers (ignored when unsupported) */
   useWorker: boolean;
@@ -53,11 +58,12 @@ function modelOptions(file: string, useWorker: boolean, integrity: string | unde
 
 /** Provides the model configuration to the hooks below and starts both downloads at once. */
 export function VoiceProvider({ config, children }: { config: VoiceConfig; children?: ReactNode }): ReactElement {
-  const ttsDigest = config.integrity?.[TTS_PACK];
+  const ttsFile = ttsPack(config.ttsModel);
+  const ttsDigest = config.integrity?.[ttsFile];
   const sttDigest = config.integrity?.[sttPack(config.sttPrecision)];
-  const tts = useMemo(() => modelOptions(TTS_PACK, config.useWorker, ttsDigest), [config.useWorker, ttsDigest]);
+  const tts = useMemo(() => modelOptions(ttsFile, config.useWorker, ttsDigest), [ttsFile, config.useWorker, ttsDigest]);
   const stt = useMemo(() => modelOptions(sttPack(config.sttPrecision), config.useWorker, sttDigest), [config.sttPrecision, config.useWorker, sttDigest]);
-  // a long dispose delay: switching precision back and forth should not reload the other model
+  // a long dispose delay: switching precision or voice back and forth should not reload the other model
   return createElement(CipetpetProvider, { tts, stt, preload: true, disposeDelayMs: 30_000 }, children);
 }
 

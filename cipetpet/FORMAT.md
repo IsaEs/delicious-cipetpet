@@ -34,11 +34,11 @@ file.
   "version": 1,                     // = formatVersion
   "generator": "cipetpet-pack 0.1.0",
   "model": {
-    "id": "antalia-mini",           // "antalia-mini" | "duyu-small"
+    "id": "antalia-mini",           // "antalia-mini" | "ema-lightning" | "duyu-small"
     "name": "Antalia-2 Mini",
     "version": "1.0.0",             // the model release
     "task": "text-to-speech",       // "text-to-speech" | "speech-recognition"
-    "variant": "mixed",             // precision set inside: antalia mixed|fp32|fp16|int8, duyu int8|q4|fp32
+    "variant": "mixed",             // precision set inside: antalia mixed|fp32|fp16|int8, ema fp32, duyu int8|q4|fp32
     "license": "Apache-2.0",
     "source": "https://huggingface.co/...",
     "languages": ["tr"]
@@ -75,6 +75,16 @@ Readers ignore header keys they do not know, so later versions can add keys with
 | `model/manifest.json` | json | the release manifest: symbols, defaults, synthesis options |
 
 `meta`: `{ "sampleRate": 48000, "precision": { "text": "", "cond": "", "flow": "", "vocoder": ".fp16" } }`
+
+**ema-lightning** (`model.task = "text-to-speech"`):
+
+| entry | type | content |
+|---|---|---|
+| `graphs/text.onnx`, `graphs/sound.onnx`, `graphs/decoder.onnx` | onnx | the three graphs of ema-lightning-web's `export_onnx.py` (fp32) |
+| `model/config.json` | json | `{ vocab, latent_dim, steps, hop, sample_rate, fps }` as the export writes it |
+| `frontend/normalizer.wasm` | wasm (gzip) | normalizer-tr compiled with wasm-bindgen (ema-lightning-web's `normalizer` crate); the library links it itself, so any wasm-bindgen version works |
+
+`meta`: `{ "sampleRate": 48000 }`
 
 **duyu-small** (`model.task = "speech-recognition"`):
 

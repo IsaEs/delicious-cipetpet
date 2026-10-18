@@ -16,7 +16,7 @@ vi.mock("../src/voice/cipetpet.ts", () => {
   const view = (ready: boolean) => ({ status: ready ? "ready" : "loading", progress: null, loadedBytes: 0, totalBytes: 0, error: null, retry() {}, detail: null });
   return {
     PACK_MB: {},
-    TTS_PACK: "antalia-mini-mixed.cpet",
+    ttsPack: (m: string) => (m === "ema" ? "ema-lightning-fp32.cpet" : "antalia-mini-mixed.cpet"),
     sttPack: (p: string) => `duyu-small-${p}.cpet`,
     workerSupported: () => false,
     createMicInput: () => fx.mic,
@@ -30,7 +30,7 @@ vi.mock("../src/voice/cipetpet.ts", () => {
   };
 });
 
-const SERVER: ServerConfig = { loaded: true, proxy: false, defaultModel: "openai/gpt-4o", packs: {} };
+const SERVER: ServerConfig = { loaded: true, proxy: false, defaultModel: "openai/gpt-4o", provider: null, providers: [], packs: {} };
 
 function renderConversation(handsFree: boolean) {
   const i18n = { lang: "en" as const, t: translator("en") };

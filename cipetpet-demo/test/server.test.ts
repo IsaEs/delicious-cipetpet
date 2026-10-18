@@ -7,7 +7,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 // @ts-expect-error plain .mjs without declarations
-import { createDemoServer, hostAllowed, packIntegrity, sanitizeChatRequest } from "../server/server.mjs";
+import { createDemoServer, hostAllowed, packIntegrity, sanitizeChatRequest, sanitizeModelList } from "../server/server.mjs";
+// @ts-expect-error plain .mjs without declarations
+import { providersFromEnv } from "../server/providers.mjs";
 import { FAKE_KEY, sleep, until } from "./helpers.ts";
 
 interface Reply {
@@ -280,7 +282,13 @@ describe("/api/config and pack digests", () => {
     });
     const s = await start({ files: { "manifest.json": manifest, "b.cpet": "tiny" } });
     const cfg = JSON.parse((await call(s.base, "GET", "/api/config")).body);
-    expect(cfg).toEqual({ proxy: true, defaultModel: "openai/gpt-4o", packs: { "a.cpet": digest } });
+    expect(cfg).toEqual({
+      proxy: true,
+      defaultModel: "openai/gpt-4o",
+      provider: "openrouter",
+      providers: [{ id: "openrouter", name: "OpenRouter", kind: "openrouter", defaultModel: "openai/gpt-4o" }],
+      packs: { "a.cpet": digest },
+    });
     expect(JSON.stringify(cfg)).not.toContain(FAKE_KEY);
     expect(packIntegrity(join(s.root, "does-not-exist"))).toEqual({});
   });
@@ -290,6 +298,110 @@ describe("/api/config and pack digests", () => {
     expect(s.logs.some((l) => /not https/.test(l))).toBe(true);
     const ok = await start({ env: { OPENROUTER_UPSTREAM: "http://127.0.0.1:9/v1" } });
     expect(ok.logs.some((l) => /not https/.test(l))).toBe(false);
+  });
+});
+
+describe("OpenAI-compatible providers", () => {
+  const LOCAL = { LLM_PROVIDERS: "ollama, groq", LLM_OLLAMA_BASE_URL: "http://127.0.0.1:11434/v1/", LLM_OLLAMA_MODEL: "llama3.2:3b", LLM_OLLAMA_NAME: "Ollama (local)", LLM_GROQ_BASE_URL: "https://api.groq.com/openai/v1", LLM_GROQ_API_KEY: "gsk-test-key", LLM_GROQ_MODEL: "llama-3.3-70b-versatile" };
+
+  it("providersFromEnv: OpenRouter first, then LLM_PROVIDERS in order; bad entries are skipped with a warning", () => {
+    const logs: string[] = [];
+    const { providers, defaultId } = providersFromEnv(
+      { OPENROUTER_API_KEY: "or-key", ...LOCAL, LLM_PROVIDERS: "ollama,groq,Bad Id,missing,ollama,ftp", LLM_FTP_BASE_URL: "ftp://x.example/v1", LLM_DEFAULT_PROVIDER: "groq" },
+      (l: string) => logs.push(l),
+    );
+    expect(providers.map((p: { id: string }) => p.id)).toEqual(["openrouter", "ollama", "groq"]);
+    expect(providers[1]).toEqual({ id: "ollama", name: "Ollama (local)", kind: "openai", baseUrl: "http://127.0.0.1:11434/v1", apiKey: "", defaultModel: "llama3.2:3b" });
+    expect(defaultId).toBe("groq");
+    expect(logs.join("\n")).toMatch(/"bad id" is not a valid id/);
+    expect(logs.join("\n")).toMatch(/LLM_MISSING_BASE_URL is not set/);
+    expect(logs.join("\n")).toMatch(/"ollama" is listed twice/);
+    expect(logs.join("\n")).toMatch(/LLM_FTP_BASE_URL must be an http\(s\) URL/);
+    // a key sent over plain http to a non-loopback host is worth a warning; a keyless local server is not
+    const warn: string[] = [];
+    providersFromEnv({ LLM_PROVIDERS: "lan,local", LLM_LAN_BASE_URL: "http://gpu.lan:8000/v1", LLM_LAN_API_KEY: "k", LLM_LAN_MODEL: "m", LLM_LOCAL_BASE_URL: "http://gpu.lan:8000/v1", LLM_LOCAL_MODEL: "m" }, (l: string) => warn.push(l));
+    expect(warn).toHaveLength(1);
+    expect(warn[0]).toMatch(/LLM_LAN_BASE_URL http:\/\/gpu\.lan:8000 is not https/);
+  });
+
+  it("without OpenRouter: /api/config lists the compatible providers, and /api/chat routes by the body's provider", async () => {
+    const s = await start({ env: { OPENROUTER_API_KEY: "", ...LOCAL } });
+    const cfg = JSON.parse((await call(s.base, "GET", "/api/config")).body);
+    expect(cfg).toMatchObject({ proxy: true, provider: "ollama", defaultModel: "llama3.2:3b" });
+    expect(cfg.providers).toEqual([
+      { id: "ollama", name: "Ollama (local)", kind: "openai", defaultModel: "llama3.2:3b" },
+      { id: "groq", name: "groq", kind: "openai", defaultModel: "llama-3.3-70b-versatile" },
+    ]);
+    expect(JSON.stringify(cfg)).not.toContain("gsk-test-key");
+    expect(JSON.stringify(cfg)).not.toContain("11434");
+
+    // the default provider, with no key: no Authorization header, and no OpenRouter attribution
+    expect((await call(s.base, "POST", "/api/chat", JSON_H, GOOD)).status).toBe(200);
+    expect(s.upstream[0].url).toBe("http://127.0.0.1:11434/v1/chat/completions");
+    expect(Object.keys(s.upstream[0].init.headers as object).map((k) => k.toLowerCase()).sort()).toEqual(["accept", "content-type"]);
+    expect(JSON.parse(String(s.upstream[0].init.body))).toEqual({ model: "llama3.2:3b", messages: [{ role: "user", content: "Merhaba" }], stream: false });
+
+    // another provider by id: its key, its default model, "provider" is not forwarded
+    const body = JSON.stringify({ provider: "groq", messages: [{ role: "user", content: "Merhaba" }], stream: false });
+    expect((await call(s.base, "POST", "/api/chat", JSON_H, body)).status).toBe(200);
+    expect(s.upstream[1].url).toBe("https://api.groq.com/openai/v1/chat/completions");
+    expect((s.upstream[1].init.headers as Record<string, string>).Authorization).toBe("Bearer gsk-test-key");
+    expect(JSON.parse(String(s.upstream[1].init.body))).toEqual({ model: "llama-3.3-70b-versatile", messages: [{ role: "user", content: "Merhaba" }], stream: false });
+
+    // an unknown provider is a 400 that names the ones there are; nothing goes upstream
+    const bad = await call(s.base, "POST", "/api/chat", JSON_H, JSON.stringify({ provider: "openai", messages: [{ role: "user", content: "x" }] }));
+    expect(bad.status).toBe(400);
+    expect(bad.body).toContain("ollama, groq");
+    expect(s.upstream).toHaveLength(2);
+    expect(s.logs.join("\n")).not.toContain("gsk-test-key");
+  });
+
+  it("a provider without a default model needs the page to name one", async () => {
+    const s = await start({ env: { OPENROUTER_API_KEY: "", LLM_PROVIDERS: "lm", LLM_LM_BASE_URL: "http://localhost:1234/v1" } });
+    expect(s.logs.some((l) => /LLM_LM_MODEL is not set/.test(l))).toBe(true);
+    const r = await call(s.base, "POST", "/api/chat", JSON_H, GOOD);
+    expect(r.status).toBe(400);
+    expect(r.body).toContain("no model");
+    expect((await call(s.base, "POST", "/api/chat", JSON_H, JSON.stringify({ model: "qwen2.5-7b", messages: [{ role: "user", content: "x" }] }))).status).toBe(200);
+    expect(s.upstream).toHaveLength(1);
+  });
+
+  it("no provider at all: 503 that says what to set", async () => {
+    const s = await start({ env: { OPENROUTER_API_KEY: "" } });
+    const r = await call(s.base, "POST", "/api/chat", JSON_H, GOOD);
+    expect(r.status).toBe(503);
+    expect(r.body).toMatch(/OPENROUTER_API_KEY.*LLM_PROVIDERS/);
+    expect(JSON.parse((await call(s.base, "GET", "/api/config")).body)).toMatchObject({ proxy: false, provider: null, providers: [] });
+  });
+
+  it("GET /api/models proxies the provider's model list with its key, sanitised and cached", async () => {
+    const upstream: UpstreamCall[] = [];
+    const s = await start({
+      env: { OPENROUTER_API_KEY: "", ...LOCAL },
+      fetch: (async (url: unknown, init?: RequestInit) => {
+        upstream.push({ url: String(url), init: init ?? {} });
+        return new Response(JSON.stringify({ object: "list", data: [{ id: "llama-3.3-70b-versatile", owned_by: "Meta", secret: "x" }, { id: 42 }, { id: "whisper-large-v3", name: "Whisper" }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }) as typeof fetch,
+    });
+    const r = await call(s.base, "GET", "/api/models?provider=groq");
+    expect(r.status).toBe(200);
+    expect(JSON.parse(r.body)).toEqual({ data: [{ id: "llama-3.3-70b-versatile" }, { id: "whisper-large-v3", name: "Whisper" }] });
+    expect(upstream[0].url).toBe("https://api.groq.com/openai/v1/models");
+    expect((upstream[0].init.headers as Record<string, string>).Authorization).toBe("Bearer gsk-test-key");
+    expect(upstream[0].init.redirect).toBe("error");
+    await call(s.base, "GET", "/api/models?provider=groq");
+    expect(upstream).toHaveLength(1);
+    expect((await call(s.base, "GET", "/api/models?provider=nope")).status).toBe(400);
+    expect((await call(s.base, "GET", "/api/models?provider=groq", { Origin: "https://evil.example" })).status).toBe(403);
+    expect((await call(s.base, "POST", "/api/models?provider=groq")).status).toBe(405);
+  });
+
+  it("sanitizeModelList keeps ids, names, pricing and context; rejects what is not a list", () => {
+    expect(sanitizeModelList({ data: [{ id: "a", name: "A", pricing: { prompt: "0.1", completion: "0.2" }, context_length: 8192, extra: 1 }] })).toEqual({
+      data: [{ id: "a", name: "A", pricing: { prompt: "0.1", completion: "0.2" }, context_length: 8192 }],
+    });
+    expect(sanitizeModelList([{ id: "bare-array" }])).toEqual({ data: [{ id: "bare-array" }] });
+    expect(sanitizeModelList({ models: [] })).toBeNull();
   });
 });
 

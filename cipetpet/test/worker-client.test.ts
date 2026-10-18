@@ -3,7 +3,7 @@
 // faked, since Node has none of the browser's worker machinery.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createAntaliaWorker, createDuyuWorker, makeWorker } from "../src/worker/client.js";
+import { createAntaliaWorker, createDuyuWorker, createEmaWorker, createTtsWorker, makeWorker } from "../src/worker/client.js";
 import type { WorkerRequest } from "../src/worker/protocol.js";
 
 type G = Record<string, unknown>;
@@ -258,6 +258,24 @@ test("worker client: the load message is cloneable and its URLs are absolute aga
     await assert.rejects(createDuyuWorker("https://m.example/x.cpet", { fetch: (() => {}) as never }), /"fetch" option cannot be used with a worker/);
     await assert.rejects(createAntaliaWorker("https://m.example/x.cpet", { ort: {} }), /"ort" option cannot be used with a worker/);
     assert.equal(FakeWorker.created.length, before);
+  } finally {
+    env.restore();
+  }
+});
+
+test("TTS workers: the load names the model the pack must hold (none for createTtsWorker)", async () => {
+  const env = install("https://app.example");
+  try {
+    const made = [
+      await createAntaliaWorker("packs/a.cpet", { worker: "https://app.example/w.js" }),
+      await createEmaWorker("packs/e.cpet", { worker: "https://app.example/w.js" }),
+      await createTtsWorker("packs/t.cpet", { worker: "https://app.example/w.js" }),
+      await createDuyuWorker("packs/d.cpet", { worker: "https://app.example/w.js" }),
+    ];
+    const loads = FakeWorker.created.map((w) => w.posted[0] as Extract<WorkerRequest, { type: "load" }>);
+    assert.deepEqual(loads.map((l) => [l.kind, l.model]), [["tts", "antalia-mini"], ["tts", "ema-lightning"], ["tts", undefined], ["stt", undefined]]);
+    assert.ok(loads.every((l) => !("model" in l) || l.model !== undefined), "no model key at all when there is none");
+    for (const m of made) await m.dispose();
   } finally {
     env.restore();
   }

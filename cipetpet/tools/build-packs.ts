@@ -1,7 +1,12 @@
 // Builds the .cpet packs from the upstream model files.
 //
 //   npx tsx tools/build-packs.ts [--out packs] [--only antalia-mini-mixed,duyu-small-int8] [--embed-runtime]
-//                                [--hash-names] [--antalia DIR] [--duyu DIR]
+//                                [--hash-names] [--antalia DIR] [--duyu DIR] [--ema DIR]
+//
+// EMA Lightning has no pinned upstream with ONNX files: its graphs come from ema-lightning-web's export
+// (web/export_onnx.py) and its text normaliser from that project's normalizer-tr WebAssembly build. --ema takes
+// that web/ folder (models/ + normalizer/pkg/) or a copy of its dist/; the default is ../ema-lightning-web/web.
+// When the folder is missing the ema-lightning pack is skipped (unless --only asks for it).
 //
 // Packs are deterministic: the same inputs give byte-identical files (the printed SHA-256 shows it).
 //
@@ -25,6 +30,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 export const ANTALIA_GRAPHS = ["text", "cond", "flow", "vocoder"] as const;
 export const DUYU_GRAPHS = ["encoder_pre", "encoder_pass", "encoder_post", "decoder"] as const;
+export const EMA_GRAPHS = ["text", "sound", "decoder"] as const;
+export const EMA_PACK = "ema-lightning-fp32";
 
 /** Graph file suffix per Antalia graph for each pack variant. */
 export const ANTALIA_VARIANTS: Record<string, Record<(typeof ANTALIA_GRAPHS)[number], string>> = {
@@ -39,6 +46,8 @@ export interface BuildOptions {
   out: string;
   antaliaDir: string;
   duyuDir: string;
+  /** ema-lightning-web's web/ folder (or its dist/); the EMA pack is skipped when it holds no export */
+  emaDir?: string;
   /** pack names (e.g. "duyu-small-int8") to build; all when undefined */
   only?: string[];
   embedRuntime?: boolean;
@@ -214,15 +223,70 @@ function duyuPlans(dir: string): PackPlan[] {
   }));
 }
 
+/** Where an EMA Lightning export keeps its files: web/{models/, normalizer/pkg/} or a dist/ copy (models/ + the
+ * normaliser's .wasm at the top). null when `dir` holds no complete export. */
+export function emaFiles(dir: string): { models: string; normalizer: string } | null {
+  const models = [join(dir, "models"), dir].find((d) => ["config.json", ...EMA_GRAPHS.map((g) => `${g}.onnx`)].every((f) => existsSync(join(d, f))));
+  const normalizer = [join(dir, "normalizer/pkg/normalizer_tr_wasm_bg.wasm"), join(dir, "normalizer_tr_wasm_bg.wasm")].find((f) => existsSync(f));
+  return models && normalizer ? { models, normalizer } : null;
+}
+
+/** The ema-lightning package version from the pyproject.toml next to the export, if there is one. */
+function emaVersion(dir: string): string {
+  for (const candidate of [join(dir, "pyproject.toml"), join(dir, "..", "pyproject.toml"), join(dir, "../..", "pyproject.toml")]) {
+    if (!existsSync(candidate)) continue;
+    const text = readFileSync(candidate, "utf8");
+    if (!/^name\s*=\s*"ema-lightning"/m.test(text)) continue;
+    const m = /^version\s*=\s*"([^"]+)"/m.exec(text);
+    if (m) return m[1];
+  }
+  return "unknown";
+}
+
+function emaPlans(dir: string | undefined): PackPlan[] {
+  const files = dir ? emaFiles(dir) : null;
+  if (!dir || !files) return [];
+  return [{
+    name: EMA_PACK,
+    build: async () => {
+      const model: PackModelInfo = {
+        id: "ema-lightning",
+        name: "EMA Lightning",
+        version: emaVersion(dir),
+        task: "text-to-speech",
+        variant: "fp32",
+        license: "Apache-2.0",
+        source: "https://huggingface.co/canberkkkkkk/ema-lightning",
+        languages: ["tr"],
+      };
+      const config = json(join(files.models, "config.json"));
+      if (!Array.isArray(config.vocab) || !config.latent_dim || !config.steps || !config.hop || !config.sample_rate)
+        throw new Error(`${join(files.models, "config.json")} is not an EMA Lightning config (vocab, latent_dim, steps, hop, sample_rate)`);
+      const normalizer = read(files.normalizer);
+      if (!WebAssembly.validate(normalizer)) throw new Error(`${files.normalizer} is not valid WebAssembly`);
+      const entries: PackInputEntry[] = [
+        ...EMA_GRAPHS.map((g): PackInputEntry => ({ name: `graphs/${g}.onnx`, type: "onnx", data: read(join(files.models, `${g}.onnx`)) })),
+        { name: "model/config.json", type: "json", data: read(join(files.models, "config.json")) },
+        // unlike ORT's binary, the normaliser is mostly data tables: gzip takes it to about a third
+        { name: "frontend/normalizer.wasm", type: "wasm", data: normalizer, encoding: "auto" },
+      ];
+      return { model, meta: { sampleRate: config.sample_rate }, entries };
+    },
+  }];
+}
+
 /** Build the selected packs into `opts.out`. */
 export async function buildPacks(opts: BuildOptions): Promise<BuiltPack[]> {
   const log = opts.log ?? (() => {});
   const ortDir = opts.ortDir ?? join(ROOT, "node_modules/onnxruntime-web");
   const ortVersion = String(json(join(ortDir, "package.json")).version);
 
-  const plans = [...antaliaPlans(opts.antaliaDir), ...duyuPlans(opts.duyuDir)];
+  const plans = [...antaliaPlans(opts.antaliaDir), ...duyuPlans(opts.duyuDir), ...emaPlans(opts.emaDir)];
   if (opts.only) {
     const unknown = opts.only.filter((n) => !plans.some((p) => p.name === n));
+    if (unknown.includes(EMA_PACK)) {
+      throw new Error(`${EMA_PACK} needs an EMA Lightning export: --ema DIR (ema-lightning-web's web/ folder with models/ and normalizer/pkg/)${opts.emaDir ? `; ${opts.emaDir} has none` : ""}`);
+    }
     if (unknown.length) throw new Error(`unknown pack(s): ${unknown.join(", ")} (available: ${plans.map((p) => p.name).join(", ")})`);
   }
   const selected = opts.only ? plans.filter((p) => opts.only!.includes(p.name)) : plans;
@@ -283,6 +347,7 @@ function parseArgs(argv: string[]): BuildOptions {
     out: join(ROOT, "packs"),
     antaliaDir: join(ROOT, ".upstream/antalia-mini"),
     duyuDir: join(ROOT, ".upstream/duyu-small"),
+    emaDir: join(ROOT, "../ema-lightning-web/web"),
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -297,8 +362,9 @@ function parseArgs(argv: string[]): BuildOptions {
     else if (a === "--hash-names") opts.hashNames = true;
     else if (a === "--antalia") opts.antaliaDir = resolve(value());
     else if (a === "--duyu") opts.duyuDir = resolve(value());
+    else if (a === "--ema") opts.emaDir = resolve(value());
     else if (a === "--help" || a === "-h") {
-      console.log("usage: tsx tools/build-packs.ts [--out packs] [--only name,...] [--embed-runtime] [--hash-names] [--antalia DIR] [--duyu DIR]");
+      console.log("usage: tsx tools/build-packs.ts [--out packs] [--only name,...] [--embed-runtime] [--hash-names] [--antalia DIR] [--duyu DIR] [--ema DIR]");
       process.exit(0);
     } else throw new Error(`unknown argument ${a}`);
   }

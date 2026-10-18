@@ -1,5 +1,10 @@
-// The model picker's list: OpenRouter's public model index (no key needed), fetched only when the user opens
-// the picker, with a short built-in list when that fails (offline, blocked, slow).
+// The model picker's list, fetched only when the user opens the picker:
+// * OpenRouter: its public model index (no key needed), with a short built-in list when that fails;
+// * a provider of the demo server: GET /api/models?provider=<id> (the server asks the provider with its key);
+// * a direct OpenAI-compatible endpoint: GET <base>/models with the user's key.
+// Every one is the OpenAI {data: [{id, ...}]} shape; OpenRouter's entries also carry names and prices.
+
+import { extractErrorMessage } from "./errors.ts";
 
 export interface ModelOption {
   id: string;
@@ -48,30 +53,73 @@ export function parseModels(json: unknown): ModelOption[] {
 
 export interface ModelList {
   models: ModelOption[];
-  /** false when the built-in fallback is shown */
+  /** false when the list could not be fetched (OpenRouter: the built-in fallback is shown, others: none) */
   live: boolean;
+  /** why it could not be fetched */
+  error?: string;
 }
 
-let cached: Promise<ModelList> | undefined;
+/** Where a model list comes from. */
+export type ModelSource =
+  | { kind: "openrouter" }
+  | { kind: "proxy"; provider: string }
+  | { kind: "direct"; baseUrl: string; getKey: () => string };
 
-/** Fetches the list once per page (failures are not cached, so reopening the picker retries). */
+const cached = new Map<string, Promise<ModelList>>();
+
+const sourceKey = (s: ModelSource): string => (s.kind === "openrouter" ? "openrouter" : s.kind === "proxy" ? `proxy:${s.provider}` : `direct:${s.baseUrl}`);
+
+/** Fetches OpenRouter's public list once per page (failures are not cached, so reopening the picker retries). */
 export function loadModels(f: typeof fetch = globalThis.fetch.bind(globalThis), timeoutMs = 8000): Promise<ModelList> {
-  cached ??= (async () => {
+  return loadModelsFrom({ kind: "openrouter" }, f, timeoutMs);
+}
+
+/** Fetches a source's list once per page; a failure is not cached. */
+export function loadModelsFrom(source: ModelSource, f: typeof fetch = globalThis.fetch.bind(globalThis), timeoutMs = 8000): Promise<ModelList> {
+  const key = sourceKey(source);
+  let list = cached.get(key);
+  if (!list) {
+    list = fetchList(source, f, timeoutMs).catch((e: unknown) => {
+      cached.delete(key);
+      const error = e instanceof Error ? e.message : String(e);
+      return source.kind === "openrouter" ? { models: FALLBACK_MODELS, live: false } : { models: [], live: false, error };
+    });
+    cached.set(key, list);
+  }
+  return list;
+}
+
+async function fetchList(source: ModelSource, f: typeof fetch, timeoutMs: number): Promise<ModelList> {
+  const signal = AbortSignal.timeout(timeoutMs);
+  let res: Response;
+  if (source.kind === "openrouter") {
+    res = await f(MODELS_URL, { signal, credentials: "omit", referrerPolicy: "no-referrer" });
+  } else if (source.kind === "proxy") {
+    res = await f(`/api/models?provider=${encodeURIComponent(source.provider)}`, { signal, headers: { Accept: "application/json" } });
+  } else {
+    const key = source.getKey().trim();
+    res = await f(`${source.baseUrl}/models`, {
+      signal,
+      headers: key ? { Accept: "application/json", Authorization: `Bearer ${key}` } : { Accept: "application/json" },
+      credentials: "omit",
+      referrerPolicy: "no-referrer",
+    });
+  }
+  if (!res.ok) {
+    let detail = "";
     try {
-      const res = await f(MODELS_URL, { signal: AbortSignal.timeout(timeoutMs), credentials: "omit", referrerPolicy: "no-referrer" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const models = parseModels(await res.json());
-      if (models.length === 0) throw new Error("empty list");
-      return { models, live: true };
+      detail = extractErrorMessage(JSON.parse(await res.text())) ?? "";
     } catch {
-      cached = undefined;
-      return { models: FALLBACK_MODELS, live: false };
+      // no readable body
     }
-  })();
-  return cached;
+    throw new Error(`HTTP ${res.status}${detail ? `: ${detail}` : ""}`);
+  }
+  const models = parseModels(await res.json());
+  if (models.length === 0) throw new Error("empty list");
+  return { models, live: true };
 }
 
 /** for tests */
 export function resetModelCache(): void {
-  cached = undefined;
+  cached.clear();
 }

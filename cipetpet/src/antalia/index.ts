@@ -39,7 +39,7 @@ function checkPack(pack: Pack): void {
   if (id !== MODEL_ID || task !== TASK) {
     throw new Error(
       `cipetpet: AntaliaMini.load needs an "${MODEL_ID}" (${TASK}) pack, but this pack holds "${id}" (${task}, variant "${variant}")` +
-        (id === "duyu-small" ? "; load it with DuyuSmall instead" : ""),
+        (id === "duyu-small" ? "; load it with DuyuSmall instead" : id === "ema-lightning" ? "; load it with EmaLightning (or loadTextToSpeech) instead" : ""),
     );
   }
 }

@@ -10,7 +10,7 @@
 // Only the subset cipetpet-react uses is declared. Keep it in sync with the contract.
 
 // ------------------------------------------------------------------------------------------ pack/types.ts
-export type ModelId = "antalia-mini" | "duyu-small";
+export type ModelId = "antalia-mini" | "ema-lightning" | "duyu-small";
 export type ModelTask = "text-to-speech" | "speech-recognition";
 
 export interface PackModelInfo {
@@ -143,6 +143,21 @@ export declare class AntaliaMini {
   dispose(): Promise<void>;
 }
 
+export declare class EmaLightning {
+  private constructor();
+  static load(source: PackSource, opts?: LoadOptions): Promise<EmaLightning>;
+  readonly info: ModelInfo;
+  readonly defaults: { speed: number };
+  normalize(text: string): string;
+  synthesize(text: string, opts?: SynthesisOptions): Promise<SynthesisResult>;
+  stream(text: string, opts?: SynthesisOptions): AsyncGenerator<SpeechChunk>;
+  dispose(): Promise<void>;
+}
+
+export type TextToSpeechModel = AntaliaMini | EmaLightning;
+export type TtsModelId = "antalia-mini" | "ema-lightning";
+export declare function loadTextToSpeech(source: PackSource, opts?: LoadOptions, expect?: TtsModelId): Promise<TextToSpeechModel>;
+
 export declare class DuyuSmall {
   private constructor();
   static load(source: PackSource, opts?: LoadOptions): Promise<DuyuSmall>;
@@ -165,6 +180,17 @@ export interface AntaliaWorker {
   dispose(): Promise<void>;
 }
 
+export interface EmaWorker {
+  readonly info: ModelInfo;
+  readonly defaults: { speed: number };
+  normalize(text: string): Promise<string>;
+  synthesize(text: string, opts?: SynthesisOptions): Promise<SynthesisResult>;
+  stream(text: string, opts?: SynthesisOptions): AsyncGenerator<SpeechChunk>;
+  dispose(): Promise<void>;
+}
+
+export type TtsWorker = AntaliaWorker | EmaWorker;
+
 export interface DuyuWorker {
   readonly info: ModelInfo;
   transcribe(audio: Float32Array, opts?: TranscribeOptions): Promise<TranscriptionResult>;
@@ -175,6 +201,14 @@ export declare function createAntaliaWorker(
   source: string | URL | ArrayBuffer | Uint8Array | Blob,
   opts?: WorkerOptions,
 ): Promise<AntaliaWorker>;
+export declare function createEmaWorker(
+  source: string | URL | ArrayBuffer | Uint8Array | Blob,
+  opts?: WorkerOptions,
+): Promise<EmaWorker>;
+export declare function createTtsWorker(
+  source: string | URL | ArrayBuffer | Uint8Array | Blob,
+  opts?: WorkerOptions,
+): Promise<TtsWorker>;
 export declare function createDuyuWorker(
   source: string | URL | ArrayBuffer | Uint8Array | Blob,
   opts?: WorkerOptions,

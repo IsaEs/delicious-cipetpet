@@ -4,8 +4,10 @@
 //   /               dist/ (the built app)
 //   /packs/*        ../cipetpet/packs (model packs: Range requests, ETag revalidation)
 //   /ort/*          onnxruntime-web's dist/ (the WASM runtime files ORT fetches at run time)
-//   GET  /api/config  {proxy: boolean, defaultModel: string, packs: {file: "sha256-<base64>"}}
-//   POST /api/chat    -> OpenRouter chat completions, the API key added here (never sent to the browser)
+//   GET  /api/config  {proxy, defaultModel, provider, providers: [{id, name, kind, defaultModel}], packs: {file: "sha256-<base64>"}}
+//   POST /api/chat    -> <provider>/chat/completions (OpenRouter or any OpenAI-compatible API, see providers.mjs),
+//                        the API key added here (never sent to the browser); the body's "provider" picks one
+//   GET  /api/models?provider=<id>  -> that provider's GET /models, as {data: [{id, name?, ...}]}
 //
 // Every response carries COOP same-origin + COEP require-corp (+ CORP same-origin), so the page is
 // cross-origin isolated: SharedArrayBuffer is available and ONNX Runtime can run WASM threads.
@@ -16,16 +18,21 @@ import { createRequire } from "node:module";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadEnv } from "./env.mjs";
+import { DEFAULT_OPENROUTER_MODEL, DEFAULT_OPENROUTER_UPSTREAM, displayUrl, providersFromEnv, publicProvider } from "./providers.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DEMO_ROOT = resolve(HERE, "..");
 
-export const DEFAULT_MODEL = "openai/gpt-4o";
-export const DEFAULT_UPSTREAM = "https://openrouter.ai/api/v1";
+export const DEFAULT_MODEL = DEFAULT_OPENROUTER_MODEL;
+export const DEFAULT_UPSTREAM = DEFAULT_OPENROUTER_UPSTREAM;
 export const BODY_LIMIT = 64 * 1024;
-/** request fields forwarded to OpenRouter; everything else is dropped */
+/** request fields forwarded to the provider; everything else is dropped ("provider" only picks one) */
 export const ALLOWED_FIELDS = ["model", "messages", "temperature", "max_tokens", "stream", "top_p"];
 const UPSTREAM_HEADERS_TIMEOUT_MS = 60_000;
+const MODELS_TIMEOUT_MS = 10_000;
+const MODELS_CACHE_MS = 5 * 60_000;
+/** at most this many models of a provider's list reach the page */
+export const MODELS_LIMIT = 2000;
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -262,6 +269,7 @@ export function sanitizeChatRequest(input, defaultModel) {
   for (const k of ALLOWED_FIELDS) if (k in input) body[k] = input[k];
 
   if (body.model === undefined || body.model === "") body.model = defaultModel;
+  if (body.model === undefined || body.model === "") return { ok: false, message: "no model: pick one in Settings (this provider has no default model)" };
   if (typeof body.model !== "string" || body.model.length > 200 || !/^[\w.:/@+-]+$/.test(body.model)) return { ok: false, message: "model must be a model id like openai/gpt-4o" };
 
   const msgs = body.messages;
@@ -285,6 +293,27 @@ export function sanitizeChatRequest(input, defaultModel) {
   if (!num("max_tokens", 1, 32768, true)) return { ok: false, message: "max_tokens must be an integer in 1..32768" };
   if (body.stream !== undefined && typeof body.stream !== "boolean") return { ok: false, message: "stream must be a boolean" };
   return { ok: true, body };
+}
+
+/** keeps id, name, pricing and context length of an OpenAI-style {data: [...]} model list */
+export function sanitizeModelList(json) {
+  const data = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : null;
+  if (!data) return null;
+  const out = [];
+  for (const m of data) {
+    if (out.length >= MODELS_LIMIT) break;
+    if (!m || typeof m !== "object" || typeof m.id !== "string" || !m.id || m.id.length > 200) continue;
+    /** @type {Record<string, unknown>} */
+    const o = { id: m.id };
+    if (typeof m.name === "string") o.name = m.name.slice(0, 200);
+    if (typeof m.context_length === "number") o.context_length = m.context_length;
+    if (m.pricing && typeof m.pricing === "object") {
+      const { prompt, completion } = m.pricing;
+      if ((typeof prompt === "string" || typeof prompt === "number") && (typeof completion === "string" || typeof completion === "number")) o.pricing = { prompt, completion };
+    }
+    out.push(o);
+  }
+  return { data: out };
 }
 
 /** a request from another site (CSRF against the local proxy) */
@@ -319,33 +348,79 @@ export function createDemoServer(options = {}) {
   const log = options.log ?? ((line) => console.log(line));
   const doFetch = options.fetch ?? globalThis.fetch;
 
-  const apiKey = (env.OPENROUTER_API_KEY ?? "").trim();
-  const defaultModel = (env.OPENROUTER_MODEL ?? "").trim() || DEFAULT_MODEL;
-  const upstream = ((env.OPENROUTER_UPSTREAM ?? "").trim() || DEFAULT_UPSTREAM).replace(/\/+$/, "");
+  const { providers, defaultId } = providersFromEnv(env, log);
+  const byId = new Map(providers.map((p) => [p.id, p]));
+  const defaultProvider = defaultId ? byId.get(defaultId) : undefined;
+  const defaultModel = defaultProvider?.defaultModel || (defaultProvider ? "" : DEFAULT_MODEL);
   const appName = (env.OPENROUTER_APP_NAME ?? "").trim() || "cipetpet demo";
   let siteUrl = (env.OPENROUTER_SITE_URL ?? "").trim();
   const allowedHosts = new Set(
     [...(env.ALLOWED_HOSTS ?? "").split(","), env.HOST ?? ""].map((h) => h.trim().toLowerCase().replace(/^\[|\]$/g, "")).filter(Boolean),
   );
-  try {
-    const u = new URL(upstream);
-    if (u.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(u.hostname)) {
-      log(`warning: OPENROUTER_UPSTREAM ${u.origin} is not https: the API key is sent to it as is`);
+  /** @type {Map<string, { at: number, list: unknown }>} */
+  const modelCache = new Map();
+
+  /** the headers every upstream request of `p` carries: the key, and OpenRouter's app attribution */
+  function upstreamHeaders(p, accept) {
+    /** @type {Record<string, string>} */
+    const h = { Accept: accept };
+    if (p.apiKey) h.Authorization = `Bearer ${p.apiKey}`;
+    if (p.kind === "openrouter") Object.assign(h, { "HTTP-Referer": siteUrl, "X-Title": appName });
+    return h;
+  }
+
+  /** the provider a request names (or the default); a response was sent when it returns undefined */
+  function pickProvider(res, id) {
+    if (providers.length === 0) {
+      sendError(
+        res,
+        503,
+        "The chat proxy has no provider: put OPENROUTER_API_KEY=... (OpenRouter) or LLM_PROVIDERS=... (any OpenAI-compatible API) in cipetpet-demo/.env.local and restart the server (or use the echo / direct mode in Settings).",
+      );
+      return undefined;
     }
-  } catch {
-    log("warning: OPENROUTER_UPSTREAM is not a valid URL");
+    if (id === undefined || id === null || id === "") return defaultProvider;
+    const p = typeof id === "string" ? byId.get(id) : undefined;
+    if (!p) sendError(res, 400, `unknown provider ${JSON.stringify(String(id).slice(0, 40))} (this server has: ${providers.map((x) => x.id).join(", ")})`);
+    return p;
+  }
+
+  async function proxyModels(req, res, url) {
+    if (req.method !== "GET" && req.method !== "HEAD") return sendError(res, 405, "use GET", { Allow: "GET" });
+    if (crossSite(req)) return sendError(res, 403, "cross-site requests are not allowed");
+    const p = pickProvider(res, url.searchParams.get("provider"));
+    if (!p) return;
+    const hit = modelCache.get(p.id);
+    if (hit && Date.now() - hit.at < MODELS_CACHE_MS) return sendJson(res, 200, hit.list);
+    let up;
+    try {
+      up = await doFetch(`${p.baseUrl}/models`, {
+        headers: upstreamHeaders(p, "application/json"),
+        signal: AbortSignal.timeout(MODELS_TIMEOUT_MS),
+        redirect: "error",
+      });
+    } catch (e) {
+      return sendError(res, 502, `could not reach ${p.name} (${e?.cause?.code ?? e?.name ?? "network error"})`);
+    }
+    if (!up.ok) {
+      up.body?.cancel().catch(() => {});
+      return sendError(res, 502, `${p.name} answered ${up.status} to GET /models`);
+    }
+    let list;
+    try {
+      list = sanitizeModelList(await up.json());
+    } catch {
+      list = null;
+    }
+    if (!list) return sendError(res, 502, `${p.name}'s GET /models is not an OpenAI-style model list`);
+    modelCache.set(p.id, { at: Date.now(), list });
+    return sendJson(res, 200, list);
   }
 
   async function proxyChat(req, res) {
     if (req.method !== "POST") return sendError(res, 405, "use POST", { Allow: "POST" });
     if (crossSite(req)) return sendError(res, 403, "cross-site requests are not allowed");
-    if (!apiKey) {
-      return sendError(
-        res,
-        503,
-        "The chat proxy has no OpenRouter API key: put OPENROUTER_API_KEY=... in cipetpet-demo/.env.local and restart the server (or use the echo / direct mode in Settings).",
-      );
-    }
+    if (providers.length === 0) return void pickProvider(res, undefined); // 503, with what to configure
     const type = String(req.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase();
     if (type !== "application/json") return sendError(res, 415, "Content-Type must be application/json");
 
@@ -362,7 +437,9 @@ export function createDemoServer(options = {}) {
     } catch {
       return sendError(res, 400, "body is not valid JSON");
     }
-    const checked = sanitizeChatRequest(parsed, defaultModel);
+    const provider = pickProvider(res, parsed?.provider);
+    if (!provider) return;
+    const checked = sanitizeChatRequest(parsed, provider.defaultModel);
     if (!checked.ok) return sendError(res, 400, checked.message);
 
     // the browser going away (tab closed, Stop pressed) aborts the upstream request
@@ -375,15 +452,9 @@ export function createDemoServer(options = {}) {
 
     let up;
     try {
-      up = await doFetch(`${upstream}/chat/completions`, {
+      up = await doFetch(`${provider.baseUrl}/chat/completions`, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-          Accept: checked.body.stream ? "text/event-stream" : "application/json",
-          "HTTP-Referer": siteUrl,
-          "X-Title": appName,
-        },
+        headers: { ...upstreamHeaders(provider, checked.body.stream ? "text/event-stream" : "application/json"), "Content-Type": "application/json" },
         body: JSON.stringify(checked.body),
         signal: upstreamAbort.signal,
         redirect: "error", // never follow a redirect with the key attached
@@ -392,7 +463,7 @@ export function createDemoServer(options = {}) {
       clearTimeout(headersTimer);
       if (res.destroyed || res.writableEnded) return;
       const timeout = upstreamAbort.signal.reason instanceof Error && upstreamAbort.signal.reason.message === "upstream timeout";
-      return sendError(res, timeout ? 504 : 502, timeout ? "OpenRouter did not answer in time" : `could not reach OpenRouter (${e?.cause?.code ?? e?.name ?? "network error"})`);
+      return sendError(res, timeout ? 504 : 502, timeout ? `${provider.name} did not answer in time` : `could not reach ${provider.name} (${e?.cause?.code ?? e?.name ?? "network error"})`);
     }
     clearTimeout(headersTimer);
     if (res.destroyed) {
@@ -441,9 +512,16 @@ export function createDemoServer(options = {}) {
 
       if (path === "/api/config") {
         if (req.method !== "GET" && req.method !== "HEAD") return sendError(res, 405, "use GET", { Allow: "GET" });
-        return sendJson(res, 200, { proxy: apiKey !== "", defaultModel, packs: packIntegrity(packsDir) });
+        return sendJson(res, 200, {
+          proxy: providers.length > 0,
+          defaultModel,
+          provider: defaultId,
+          providers: providers.map(publicProvider),
+          packs: packIntegrity(packsDir),
+        });
       }
       if (path === "/api/chat") return await proxyChat(req, res);
+      if (path === "/api/models") return await proxyModels(req, res, url);
       if (path.startsWith("/api/")) return sendError(res, 404, "no such endpoint");
 
       if (req.method !== "GET" && req.method !== "HEAD") return sendError(res, 405, "method not allowed", { Allow: "GET, HEAD" });
@@ -474,8 +552,10 @@ export function createDemoServer(options = {}) {
   return {
     server,
     get proxyEnabled() {
-      return apiKey !== "";
+      return providers.length > 0;
     },
+    /** id, name, URL (no credentials) and default model of each provider, for the startup log */
+    providers: providers.map((p) => ({ ...publicProvider(p), url: displayUrl(p.baseUrl), hasKey: p.apiKey !== "", isDefault: p.id === defaultId })),
     paths: { distDir, packsDir, ortDir },
     /** @param {number} port @param {string} host */
     listen(port, host) {
@@ -513,13 +593,17 @@ async function main() {
   console.log(`  app:   ${distDir}${existsSync(join(distDir, "index.html")) ? "" : "  (empty: run npm run build)"}`);
   console.log(`  packs: ${packsDir}${existsSync(packsDir) ? "" : "  (missing: build them in ../cipetpet)"}`);
   console.log(`  ort:   ${ortDir ?? "(onnxruntime-web not found: npm install in ../cipetpet)"}`);
-  console.log(
-    app.proxyEnabled
-      ? `  chat proxy: on (OpenRouter key from ${loadedFile && !process.env.OPENROUTER_API_KEY ? ".env.local" : "the environment"})`
-      : "  chat proxy: off (no OPENROUTER_API_KEY; the page offers echo / direct mode)",
-  );
+  if (app.proxyEnabled) {
+    console.log(`  chat proxy: on (settings from ${loadedFile ? ".env.local and the environment" : "the environment"})`);
+    for (const p of app.providers) {
+      const model = p.defaultModel ? `model ${p.defaultModel}` : "no default model";
+      console.log(`    ${p.isDefault ? "*" : " "} ${p.id}: ${p.name}, ${p.url}, ${model}${p.hasKey ? "" : ", no API key"}`);
+    }
+  } else {
+    console.log("  chat proxy: off (no OPENROUTER_API_KEY or LLM_PROVIDERS; the page offers echo / direct mode)");
+  }
   if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1" && app.proxyEnabled) {
-    console.warn(`  warning: listening on ${host}: anyone who can reach this address can use your OpenRouter key through /api/chat`);
+    console.warn(`  warning: listening on ${host}: anyone who can reach this address can use your providers' keys through /api/chat`);
   }
   const shutdown = () => {
     app.close().then(() => process.exit(0));

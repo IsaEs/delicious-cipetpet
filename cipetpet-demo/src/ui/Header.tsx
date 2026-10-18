@@ -54,6 +54,8 @@ function ModelCard({ name, role, view, sizeMb }: { name: string; role: string; v
 export interface HeaderProps {
   tts: ModelView;
   stt: ModelView;
+  /** the text-to-speech model's name (Antalia-2 Mini / EMA Lightning) */
+  ttsName: string;
   ttsMb: number;
   sttMb: number;
   theme: ThemeChoice;
@@ -62,7 +64,7 @@ export interface HeaderProps {
   onSettings(): void;
 }
 
-export function Header({ tts, stt, ttsMb, sttMb, theme, onTheme, onLang, onSettings }: HeaderProps): ReactElement {
+export function Header({ tts, stt, ttsName, ttsMb, sttMb, theme, onTheme, onLang, onSettings }: HeaderProps): ReactElement {
   const t = useT();
   const loading = tts.status === "loading" || stt.status === "loading";
   const isolated = (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated !== false;
@@ -76,7 +78,7 @@ export function Header({ tts, stt, ttsMb, sttMb, theme, onTheme, onLang, onSetti
           </span>
           <div>
             <h1 className="brand__title">{t("app.title")}</h1>
-            <p className="brand__tagline">{t("app.tagline")}</p>
+            <p className="brand__tagline">{t("app.tagline", { tts: ttsName })}</p>
           </div>
         </div>
         <div className="header__actions">
@@ -99,7 +101,7 @@ export function Header({ tts, stt, ttsMb, sttMb, theme, onTheme, onLang, onSetti
       </div>
       <div className="models" aria-label="models">
         <ModelCard name={t("model.stt")} role={t("model.sttRole")} view={stt} sizeMb={sttMb} />
-        <ModelCard name={t("model.tts")} role={t("model.ttsRole")} view={tts} sizeMb={ttsMb} />
+        <ModelCard name={ttsName} role={t("model.ttsRole")} view={tts} sizeMb={ttsMb} />
       </div>
       {loading && <p className="header__note">{t("model.firstLoad", { tts: ttsMb, stt: sttMb })}</p>}
       {!isolated && <p className="header__note is-warning">{t("model.notIsolated")}</p>}

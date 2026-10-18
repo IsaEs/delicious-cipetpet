@@ -1,9 +1,9 @@
-import { AntaliaMini } from "../antalia/index.js";
 import { DuyuSmall } from "../duyu/index.js";
+import { loadTextToSpeech, type TextToSpeechModel } from "../tts.js";
 import type { LoadOptions } from "../types.js";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 
-type LoadedModel = AntaliaMini | DuyuSmall;
+type LoadedModel = TextToSpeechModel | DuyuSmall;
 
 const scope = globalThis as unknown as {
   postMessage(message: WorkerResponse, transfer?: Transferable[]): void;
@@ -39,14 +39,14 @@ async function handle(request: WorkerRequest): Promise<void> {
       };
       model =
         request.kind === "tts"
-          ? await AntaliaMini.load(request.source, options)
+          ? await loadTextToSpeech(request.source, options, request.model)
           : await DuyuSmall.load(request.source, options);
       kind = request.kind;
       send({
         type: "loaded",
         id: request.id,
         info: model.info,
-        defaults: request.kind === "tts" ? (model as AntaliaMini).defaults : undefined,
+        defaults: request.kind === "tts" ? (model as TextToSpeechModel).defaults : undefined,
       });
     } catch (error) {
       sendError(request.id, error);
@@ -79,15 +79,15 @@ async function handle(request: WorkerRequest): Promise<void> {
   try {
     const [arg, options] = request.args;
     if (activeKind === "tts" && request.method === "normalize") {
-      send({ type: "result", id: request.id, value: await (active as AntaliaMini).normalize(String(arg)) });
+      send({ type: "result", id: request.id, value: await (active as TextToSpeechModel).normalize(String(arg)) });
     } else if (activeKind === "tts" && request.method === "synthesize") {
-      const result = await (active as AntaliaMini).synthesize(String(arg), {
+      const result = await (active as TextToSpeechModel).synthesize(String(arg), {
         ...(options as object),
         signal: controller.signal,
       });
       send({ type: "result", id: request.id, value: result }, [result.audio.buffer]);
     } else if (activeKind === "tts" && request.method === "stream") {
-      for await (const chunk of (active as AntaliaMini).stream(String(arg), {
+      for await (const chunk of (active as TextToSpeechModel).stream(String(arg), {
         ...(options as object),
         signal: controller.signal,
       })) {

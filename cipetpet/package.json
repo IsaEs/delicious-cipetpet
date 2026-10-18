@@ -1,7 +1,7 @@
 {
   "name": "cipetpet",
   "version": "0.1.0",
-  "description": "Turkish speech in the browser: Antalia-2 Mini (text to speech) and Duyu-small (speech recognition) running on ONNX Runtime Web (WASM), with the model files wrapped in .cpet packs.",
+  "description": "Turkish speech in the browser: Antalia-2 Mini and EMA Lightning (text to speech) and Duyu-small (speech recognition) running on ONNX Runtime Web (WASM), with the model files wrapped in .cpet packs.",
   "license": "Apache-2.0",
   "type": "module",
   "sideEffects": false,
@@ -18,6 +18,10 @@
     "./antalia": {
       "types": "./dist/types/antalia/index.d.ts",
       "import": "./dist/esm/antalia/index.js"
+    },
+    "./ema": {
+      "types": "./dist/types/ema/index.d.ts",
+      "import": "./dist/esm/ema/index.js"
     },
     "./duyu": {
       "types": "./dist/types/duyu/index.d.ts",
@@ -64,7 +68,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --import tsx --test test/*.test.ts",
     "test:unit": "node --import tsx --test test/pack.test.ts test/integrity.test.ts test/ort-cdn.test.ts test/worker-client.test.ts test/audio.test.ts test/release-assets.test.ts test/pull-cli.test.ts test/fetch-upstream.test.ts",
-    "test:packs": "node --import tsx --test test/antalia.test.ts test/duyu.test.ts",
+    "test:packs": "node --import tsx --test test/antalia.test.ts test/duyu.test.ts test/ema.test.ts",
     "serve": "node tools/serve.mjs",
     "prepublishOnly": "node tools/check-digest.mjs && npm run typecheck && npm run build"
   },

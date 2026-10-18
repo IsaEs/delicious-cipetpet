@@ -110,6 +110,10 @@ describe("release-assets", () => {
     assert.ok(!notice.includes("\r"));
     // a LICENSE file shipped by the package wins over the built-in text
     assert.ok(noticeText("1.0.0", "MY LICENSE TEXT\r\n").includes("  MY LICENSE TEXT\n"));
+    // EMA Lightning (and normalizer-tr) are credited only when the release ships one of its packs
+    assert.equal(noticeText("1.0.0", undefined, ["antalia-mini", "duyu-small"]), noticeText("1.0.0"));
+    assert.doesNotMatch(noticeText("1.0.0"), /EMA Lightning/);
+    assert.match(noticeText("1.0.0", undefined, ["ema-lightning"]), /EMA Lightning \(ema-lightning-\*\.cpet\)[\s\S]*normalizer-tr by Erdem Tuna/);
   });
 
   test("running twice gives byte-identical output (also from a second packs directory with the same content)", async () => {

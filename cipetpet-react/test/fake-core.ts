@@ -266,6 +266,9 @@ export const DuyuSmall = {
 };
 export const createAntaliaWorker = (source: unknown, opts?: LoadOptions & { worker?: unknown }) =>
   load("tts", "worker", source, opts);
+// what the registry calls: whichever TTS model the pack holds (the fake has one)
+export const loadTextToSpeech = AntaliaMini.load;
+export const createTtsWorker = createAntaliaWorker;
 export const createDuyuWorker = (source: unknown, opts?: LoadOptions & { worker?: unknown }) =>
   load("stt", "worker", source, opts);
 

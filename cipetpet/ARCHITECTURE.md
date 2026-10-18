@@ -1,10 +1,13 @@
 # cipetpet architecture (contract for contributors)
 
-cipetpet is a TypeScript library that runs two Turkish speech models in the browser (and in Node for tests),
+cipetpet is a TypeScript library that runs three Turkish speech models in the browser (and in Node for tests),
 on ONNX Runtime Web (WASM, optional WebGPU):
 
 * **Antalia-2 Mini** – text to speech, 48 kHz (source: `../antalia-mini`, a static web page in plain JS;
   `js/tts.js` + `js/frontend.js` are the reference implementation that we port to TypeScript).
+* **EMA Lightning** – text to speech, 48 kHz, 8.6M parameters (source: `../ema-lightning-web`, whose `web/` folder
+  is a browser port in plain JS: `web/src/core.js` is the reference implementation we port to TypeScript; its graphs
+  come from `web/export_onnx.py`, its text normaliser is normalizer-tr compiled to WebAssembly in `web/normalizer`).
 * **Duyu-small** – speech recognition, Turkish + English, 16 kHz in (source: `../Duyu-small`, a Python
   engine in `duyu_small/*.py`, which is the reference we port to TypeScript).
 
@@ -24,6 +27,9 @@ verified against the LFS pointers):
 .upstream/duyu-small/{fbank.npz,passes.npz,spm.model,engine.json,config.json}
 ```
 
+The EMA Lightning files have no pinned upstream: `npm run packs` reads them from `../ema-lightning-web/web`
+(`--ema DIR`), and skips the pack when the folder is missing.
+
 Graph signatures (all verified with onnx):
 
 ```
@@ -31,6 +37,9 @@ antalia text.onnx     ids int64 [1,L]                                   -> h f32
 antalia cond.onnx     h f32 [1,L,192], idx int64 [1,T]                  -> ctok, cnull f32 [1,T/2,192]
 antalia flow.onnx     x f32 [1,N,256], ctok, cnull [1,N,192], t, dt, cfg f32 [1] -> x_next f32 [1,N,256]
 antalia vocoder.onnx  z f32 [1,N,256]                                   -> mel [1,128,T], re, im [1,1025,T]
+ema text.onnx         ids int64 [1,L]                                   -> h f32 [1,L,C], dur f32 [1,L]
+ema sound.onnx        h, dur, cw int64 [1,L], wstart int64 [1,L], fw int64 [1,T], fp f32 [1,T], noise f32 [1,steps,T,64] -> latents f32 [1,T,64]
+ema decoder.onnx      z f32 [1,N,64]                                    -> audio f32 [1,N*1920]
 duyu encoder_pre      feats f32 [1,T,160]   -> x f32 [1,Tp,256]
 duyu encoder_pass     x f32 [1,Tp,256]      -> y f32 [1,Tp,256]          (run 3x with pass_embed / gates)
 duyu encoder_post     x f32 [1,Tp,256]      -> log_probs f32 [1,Tp,2048]
@@ -72,6 +81,11 @@ src/
     engine.ts              TS port of antalia-mini/js/tts.js (TorchRandn, durations, frameIndex, istft,
                            Engine, OutputChain, speak, splitModelText) on top of Runtime + Pack
     index.ts               class AntaliaMini
+  ema/
+    normalizer.ts          normalizer-tr's wasm-bindgen binding, per instance, imports matched without build hashes
+    engine.ts              TS port of ema-lightning-web/web/src/core.js (Frontend, chunk, windows, the 3-graph Engine)
+    index.ts               class EmaLightning (same API as AntaliaMini)
+  tts.ts                   loadTextToSpeech(source, opts): AntaliaMini | EmaLightning by the pack's model id
   duyu/
     fft.ts fbank.ts ctc.ts beam.ts tokenizer.ts chunks.ts   ports of features.py / decode.py / audio.py
     index.ts               class DuyuSmall
@@ -140,6 +154,16 @@ class AntaliaMini {
   stream(text: string, opts?: SynthesisOptions): AsyncGenerator<SpeechChunk>;
   dispose(): Promise<void>;
 }
+class EmaLightning {                 // same shape as AntaliaMini
+  static load(source: PackSource, opts?: LoadOptions): Promise<EmaLightning>;
+  readonly info: ModelInfo;          // sampleRate 48000
+  readonly defaults: { speed: number };  // speed 0.25..4; steps / cfg / temperature are accepted and ignored
+  normalize(text: string): string;   // normalizer-tr (fallback policy) + the model's alphabet
+  synthesize(text: string, opts?: SynthesisOptions): Promise<SynthesisResult>;
+  stream(text: string, opts?: SynthesisOptions): AsyncGenerator<SpeechChunk>;  // one chunk per decoded window
+  dispose(): Promise<void>;
+}
+function loadTextToSpeech(source: PackSource, opts?: LoadOptions, expect?: "antalia-mini" | "ema-lightning"): Promise<AntaliaMini | EmaLightning>;
 class DuyuSmall {
   static load(source: PackSource, opts?: LoadOptions): Promise<DuyuSmall>;
   readonly info: ModelInfo;          // sampleRate 16000
@@ -153,9 +177,11 @@ run two inferences at once.
 
 ### Root entry and worker client (consumed by `../cipetpet-react`)
 
-`src/index.ts` re-exports: `AntaliaMini`, `DuyuSmall`, `Pack`, `openPack`, `fetchBytes`, `writePack`, `initRuntime`,
-everything from `audio/index.ts` (`encodeWav`, `decodeWav`, `resample`, `toMono`, `decodeAudio`, `MicRecorder`,
-`playAudio`, `StreamPlayer`), `createAntaliaWorker`, `createDuyuWorker`, and all types from `types.ts` and `pack/types.ts`.
+`src/index.ts` re-exports: `AntaliaMini`, `EmaLightning`, `loadTextToSpeech`, `DuyuSmall`, `Pack`, `openPack`, `fetchBytes`,
+`writePack`, `initRuntime`, everything from `audio/index.ts` (`encodeWav`, `decodeWav`, `resample`, `toMono`, `decodeAudio`,
+`MicRecorder`, `playAudio`, `StreamPlayer`), `createAntaliaWorker`, `createEmaWorker`, `createTtsWorker`, `createDuyuWorker`,
+and all types from `types.ts` and `pack/types.ts`. (`ModelId` gained `"ema-lightning"`: an added union member, the
+one change to the fixed types.)
 
 ```ts
 // worker/client.ts: the same model API, run inside a dedicated module Worker
@@ -169,6 +195,10 @@ export interface AntaliaWorker {
   stream(text: string, opts?: SynthesisOptions): AsyncGenerator<SpeechChunk>;
   dispose(): Promise<void>;                                // disposes the model and terminates the worker
 }
+// the worker's "tts" load names the model the pack must hold (createAntaliaWorker / createEmaWorker), or none
+// (createTtsWorker: the worker reads the pack's header and loads that model)
+export function createEmaWorker(source: string | URL | ArrayBuffer | Uint8Array | Blob, opts?: WorkerOptions): Promise<EmaWorker>;   // defaults: { speed }
+export function createTtsWorker(source: string | URL | ArrayBuffer | Uint8Array | Blob, opts?: WorkerOptions): Promise<AntaliaWorker | EmaWorker>;
 export function createDuyuWorker(source: string | URL | ArrayBuffer | Uint8Array | Blob, opts?: WorkerOptions): Promise<DuyuWorker>;
 export interface DuyuWorker {
   readonly info: ModelInfo;
@@ -188,6 +218,10 @@ caller's other views stay valid. What is posted must be structured-cloneable: UR
 
 * Antalia: the TS port must give **bit-identical audio** to the original `antalia-mini/js/tts.js` given the
   same graphs, text, seed and options, and **identical model text** to `antalia-mini/js/frontend.js`.
+* EMA Lightning: the TS port must give **bit-identical audio** and **identical model text** to ema-lightning-web's
+  `web/src/core.js` (with its wasm-bindgen glue for the normaliser) given the same graphs, text, seed and speed, on the
+  same ORT module; `test/ema.test.ts` checks it when `../ema-lightning-web/web` is there. Its seeded noise is
+  core.js's (mulberry32 + Box-Muller), not torch's, so seeds do not match the Python package.
 * Duyu: fbank within 1e-4 abs of `features.py`; the search logic (beam 5, beam 1, CTC mode, tie order, language
   handling) and the encoder chain must be **identical** to `DuyuSmall.transcribe` (Python), which
   `test/duyu-parity.test.ts` proves by replaying the Python engine's own graph outputs (token ids and text equal).

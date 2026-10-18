@@ -3,14 +3,16 @@
 import type { Message } from "../conversation/types.ts";
 import type { Settings } from "./settings.ts";
 
-export function conversationJson(messages: Message[], settings: Settings, backend: string, model: string): string {
-  const { uiLang: _u, theme: _t, ...shaping } = settings;
+export function conversationJson(messages: Message[], settings: Settings, backend: string, model: string, provider = ""): string {
+  // the endpoints the user added are left out too: their URLs may point into a private network
+  const { uiLang: _u, theme: _t, customProviders: _c, ...shaping } = settings;
   return JSON.stringify(
     {
       app: "cipetpet-demo",
       version: __DEMO_VERSION__,
       exportedAt: new Date().toISOString(),
       backend,
+      ...(provider ? { provider } : {}),
       model,
       settings: shaping,
       messages: messages.map((m) =>

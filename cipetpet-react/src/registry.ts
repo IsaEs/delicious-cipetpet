@@ -10,8 +10,8 @@
 // * Observable: subscribe(key) / getSnapshot(key) are shaped for useSyncExternalStore.
 // * Errors are not cached: load() / retry() after an error (or a new entry after disposal) loads again.
 
-import { AntaliaMini, DuyuSmall, createAntaliaWorker, createDuyuWorker } from "cipetpet";
-import type { LoadOptions, PackProgress, PackSource } from "cipetpet";
+import { DuyuSmall, createDuyuWorker, createTtsWorker, loadTextToSpeech } from "cipetpet";
+import type { AntaliaMini, EmaLightning, LoadOptions, PackProgress, PackSource, createAntaliaWorker } from "cipetpet";
 import { abortError, noop, now, toError } from "./util.js";
 
 export type ModelKind = "tts" | "stt";
@@ -19,13 +19,16 @@ export type ModelKind = "tts" | "stt";
 /** The worker client types, derived from the factories (the root entry is only guaranteed to export the
  * functions). */
 export type AntaliaWorker = Awaited<ReturnType<typeof createAntaliaWorker>>;
+/** Antalia-2 Mini or EMA Lightning in a worker, whichever the pack holds (`info.id` tells). */
+export type TtsWorker = Awaited<ReturnType<typeof createTtsWorker>>;
 export type DuyuWorker = Awaited<ReturnType<typeof createDuyuWorker>>;
-export type WorkerOptions = NonNullable<Parameters<typeof createAntaliaWorker>[1]>;
+export type WorkerOptions = NonNullable<Parameters<typeof createTtsWorker>[1]>;
 /** What useWorker accepts as a source (an open Pack cannot cross the worker boundary). */
-export type WorkerSource = Parameters<typeof createAntaliaWorker>[0];
+export type WorkerSource = Parameters<typeof createTtsWorker>[0];
 
-/** A text-to-speech model: in-thread or in a Web Worker (same API, except normalize() is async there). */
-export type TtsModel = AntaliaMini | AntaliaWorker;
+/** A text-to-speech model: Antalia-2 Mini or EMA Lightning, whichever the pack's header names (`info.id`), in-thread
+ * or in a Web Worker (same API, except normalize() is async there). */
+export type TtsModel = AntaliaMini | EmaLightning | TtsWorker;
 /** A speech-recognition model: in-thread or in a Web Worker. */
 export type SttModel = DuyuSmall | DuyuWorker;
 export type ModelOf<K extends ModelKind> = K extends "tts" ? TtsModel : SttModel;
@@ -36,7 +39,7 @@ export type ModelStatus = "idle" | "loading" | "ready" | "error";
 export interface ModelOptions extends Omit<LoadOptions, "signal"> {
   /** the .cpet pack: a URL, its bytes, a Blob / File, or an open Pack (not with useWorker) */
   source?: PackSource;
-  /** run the model in a dedicated Web Worker (createAntaliaWorker / createDuyuWorker); default false */
+  /** run the model in a dedicated Web Worker (createTtsWorker / createDuyuWorker); default false */
   useWorker?: boolean;
   /** with useWorker: the worker (or its script URL) to use instead of the core's default worker.js */
   worker?: WorkerOptions["worker"];
@@ -183,7 +186,7 @@ function loadModel<K extends ModelKind>(
       usedWorkers.set(worker, {});
     }
     const wopts: WorkerOptions = worker === undefined ? opts : { ...opts, worker };
-    const loading = (kind === "tts" ? createAntaliaWorker(source, wopts) : createDuyuWorker(source, wopts)) as Promise<ModelOf<K>>;
+    const loading = (kind === "tts" ? createTtsWorker(source, wopts) : createDuyuWorker(source, wopts)) as Promise<ModelOf<K>>;
     if (isWorkerInstance(worker)) {
       loading.catch((failure: unknown) => {
         const used = usedWorkers.get(worker);
@@ -192,7 +195,7 @@ function loadModel<K extends ModelKind>(
     }
     return loading;
   }
-  return (kind === "tts" ? AntaliaMini.load(source, opts) : DuyuSmall.load(source, opts)) as Promise<ModelOf<K>>;
+  return (kind === "tts" ? loadTextToSpeech(source, opts) : DuyuSmall.load(source, opts)) as Promise<ModelOf<K>>;
 }
 
 function disposeQuietly(model: { dispose(): Promise<void> }): void {

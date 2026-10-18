@@ -6,6 +6,8 @@ const missing = (): never => {
 export const AntaliaMini = { load: missing };
 export const DuyuSmall = { load: missing };
 export const createAntaliaWorker = missing;
+export const createTtsWorker = missing;
+export const loadTextToSpeech = missing;
 export const createDuyuWorker = missing;
 export const MicRecorder = { start: missing };
 export class StreamPlayer {

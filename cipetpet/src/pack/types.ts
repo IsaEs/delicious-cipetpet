@@ -23,7 +23,7 @@ export interface PackEntry {
   shape?: number[];
 }
 
-export type ModelId = "antalia-mini" | "duyu-small";
+export type ModelId = "antalia-mini" | "ema-lightning" | "duyu-small";
 export type ModelTask = "text-to-speech" | "speech-recognition";
 
 export interface PackModelInfo {

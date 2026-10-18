@@ -6,25 +6,23 @@ import type { Message } from "../conversation/types.ts";
 import { createDirectBackend } from "../llm/direct.ts";
 import { createEchoBackend } from "../llm/echo.ts";
 import { createProxyBackend } from "../llm/proxy.ts";
-import type { BackendKind, ChatBackend } from "../llm/types.ts";
-import { createAudioOut, createMicInput, PACK_MB, sttPack, TTS_PACK, useVoiceModels, workerSupported } from "../voice/cipetpet.ts";
+import type { ChatBackend } from "../llm/types.ts";
+import { createAudioOut, createMicInput, PACK_MB, sttPack, ttsPack, useVoiceModels, workerSupported } from "../voice/cipetpet.ts";
+import { TTS_MODEL_NAMES, TTS_MODELS } from "../voice/languages.ts";
+import { chatTarget } from "./chatTarget.ts";
 import { Composer, LevelMeter, MicButton, StatusPill, StopButton, Switch } from "./Controls.tsx";
 import { conversationJson, downloadText } from "./exportConversation.ts";
 import { Header } from "./Header.tsx";
 import { useT, type MessageKey } from "./i18n.ts";
 import { DownloadIcon, InfoIcon, TrashIcon } from "./icons.tsx";
 import { SettingsDrawer } from "./SettingsDrawer.tsx";
-import { conversationSettings, loadRememberedKey, rememberKey, type Settings } from "./settings.ts";
+import { conversationSettings, useApiKeys, type Settings } from "./settings.ts";
 import { nextTheme } from "./theme.ts";
 import { Toasts } from "./Toasts.tsx";
 import { Transcript } from "./Transcript.tsx";
 import type { ServerConfig } from "./useServerConfig.ts";
 
-export function resolveBackend(choice: Settings["backend"], server: ServerConfig): BackendKind {
-  if (choice === "direct" || choice === "echo") return choice;
-  // "auto" and "proxy" use the proxy when the server has a key (or while we do not know yet)
-  return server.proxy || !server.loaded ? "proxy" : "echo";
-}
+export { resolveBackend } from "./chatTarget.ts";
 
 const isTyping = (el: EventTarget | null): boolean =>
   el instanceof HTMLElement && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A"].includes(el.tagName));
@@ -60,23 +58,29 @@ export function Conversation({ settings, update, server }: ConversationProps): R
   const models = useVoiceModels();
   const [drawer, setDrawer] = useState(false);
 
-  // direct mode key: memory only, unless the user ticks "remember"
-  const [apiKey, setApiKey] = useState(loadRememberedKey);
-  const [remember, setRemember] = useState(() => loadRememberedKey() !== "");
-  useEffect(() => rememberKey(apiKey, remember), [apiKey, remember]);
+  // direct mode keys, per provider: memory only, unless the user ticks "remember"
+  const keys = useApiKeys();
+  const keysRef = useRef(keys);
+  keysRef.current = keys;
 
-  const backendKind = resolveBackend(settings.backend, server);
-  const keyRef = useRef(apiKey);
-  keyRef.current = apiKey;
+  const target = chatTarget(settings, server);
+  const targetRef = useRef(target);
+  targetRef.current = target;
+  const backendKind = target.backend;
+  const direct = target.direct;
+  // rebuilt when where it sends to changes, not on every render (keys and the proxy's provider are read per request)
+  const directId = direct?.id, directUrl = direct?.baseUrl, directKind = direct?.kind, directName = direct?.name;
   const backend = useMemo<ChatBackend>(() => {
-    if (backendKind === "direct") return createDirectBackend({ getKey: () => keyRef.current });
+    if (backendKind === "direct" && directId && directUrl && directKind) {
+      return createDirectBackend({ getKey: () => keysRef.current.get(directId), baseUrl: directUrl, kind: directKind, name: directName });
+    }
     if (backendKind === "echo") return createEchoBackend();
-    return createProxyBackend();
-  }, [backendKind]);
+    return createProxyBackend({ getProvider: () => targetRef.current.providerId });
+  }, [backendKind, directId, directUrl, directKind, directName]);
 
   // the controller reads the latest engines / settings through this ref on every turn
-  const live = useRef({ settings, server, backend, tts: models.ttsEngine, stt: models.sttEngine });
-  live.current = { settings, server, backend, tts: models.ttsEngine, stt: models.sttEngine };
+  const live = useRef({ settings, server, target, backend, tts: models.ttsEngine, stt: models.sttEngine });
+  live.current = { settings, server, target, backend, tts: models.ttsEngine, stt: models.sttEngine };
 
   const [controller] = useState(
     () =>
@@ -85,7 +89,7 @@ export function Conversation({ settings, update, server }: ConversationProps): R
           getStt: () => live.current.stt,
           getTts: () => live.current.tts,
           getBackend: () => live.current.backend,
-          getSettings: () => conversationSettings(live.current.settings, live.current.server.defaultModel),
+          getSettings: () => conversationSettings(live.current.settings, live.current.target.model),
           mic: createMicInput(),
           audio: createAudioOut(),
         },
@@ -145,10 +149,14 @@ export function Conversation({ settings, update, server }: ConversationProps): R
   const onSpeakAgain = useCallback((id: string) => controller.speakAgain(id), [controller]);
 
   const exportJson = () => {
-    const model = backendKind === "echo" ? "echo" : settings.model || server.defaultModel;
+    const model = backendKind === "echo" ? "echo" : target.model;
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-    downloadText(conversationJson(state.messages, settings, backendKind, model), `cipetpet-conversation-${stamp}.json`);
+    downloadText(conversationJson(state.messages, settings, backendKind, model, target.providerId), `cipetpet-conversation-${stamp}.json`);
   };
+
+  // a TTS model whose pack the server does not list (when it lists any: without a manifest nothing is known)
+  const knownPacks = Object.keys(server.packs);
+  const missingTts = knownPacks.length ? TTS_MODELS.filter((m) => !knownPacks.includes(ttsPack(m))) : [];
 
   const busy = state.phase !== "idle";
   const hint = !sttReady ? t("mic.notReady") : state.handsFree ? t("mic.hintHandsFree") : t("mic.hint");
@@ -161,7 +169,8 @@ export function Conversation({ settings, update, server }: ConversationProps): R
       <Header
         tts={models.tts}
         stt={models.stt}
-        ttsMb={PACK_MB[TTS_PACK]}
+        ttsName={TTS_MODEL_NAMES[settings.ttsModel]}
+        ttsMb={PACK_MB[ttsPack(settings.ttsModel)]}
         sttMb={PACK_MB[sttPack(settings.sttPrecision)]}
         theme={settings.theme}
         onTheme={() => update({ theme: nextTheme(settings.theme) })}
@@ -248,13 +257,11 @@ export function Conversation({ settings, update, server }: ConversationProps): R
         onClose={closeDrawer}
         settings={settings}
         update={update}
-        effectiveBackend={backendKind}
+        target={target}
         proxyAvailable={server.proxy}
-        defaultModel={server.defaultModel}
-        apiKey={apiKey}
-        setApiKey={setApiKey}
-        remember={remember}
-        setRemember={setRemember}
+        serverProviders={server.providers}
+        keys={keys}
+        missingTts={missingTts}
         workerSupported={workerSupported()}
       />
     </div>

@@ -38,6 +38,7 @@ export type {
   ModelStatus,
   SttModel,
   TtsModel,
+  TtsWorker,
   WorkerOptions,
   WorkerSource,
 } from "./registry.js";
@@ -50,6 +51,7 @@ export type {
   DuyuLanguage,
   DuyuPrecision,
   DuyuSmall,
+  EmaLightning,
   LoadOptions,
   ModelInfo,
   PackProgress,
@@ -59,6 +61,7 @@ export type {
   SynthesisOptions,
   SynthesisResult,
   SynthesisTimings,
+  TextToSpeechModel,
   TranscribeOptions,
   TranscriptionResult,
 } from "cipetpet";

@@ -1,8 +1,12 @@
 export { AntaliaMini } from "./antalia/index.js";
+export { EmaLightning } from "./ema/index.js";
+export type { EmaDefaults } from "./ema/index.js";
 export { DuyuSmall } from "./duyu/index.js";
+export { loadTextToSpeech, TTS_MODEL_IDS } from "./tts.js";
+export type { TextToSpeechModel, TtsModelId } from "./tts.js";
 export * from "./pack/index.js";
 export * from "./runtime/index.js";
 export * from "./audio/index.js";
-export { createAntaliaWorker, createDuyuWorker } from "./worker/client.js";
-export type { AntaliaWorker, DuyuWorker, WorkerOptions, WorkerSource } from "./worker/client.js";
+export { createAntaliaWorker, createEmaWorker, createTtsWorker, createDuyuWorker } from "./worker/client.js";
+export type { AntaliaWorker, EmaWorker, TtsWorker, DuyuWorker, WorkerOptions, WorkerSource } from "./worker/client.js";
 export * from "./types.js";

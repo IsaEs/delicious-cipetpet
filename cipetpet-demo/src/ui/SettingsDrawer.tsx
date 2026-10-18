@@ -1,11 +1,14 @@
-import { useEffect, useId, useRef, type ReactElement, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { DEFAULT_SYSTEM_PROMPT } from "../conversation/prompt.ts";
-import type { BackendKind } from "../llm/types.ts";
-import { STT_LANGUAGES, STT_PRECISIONS } from "../voice/languages.ts";
+import type { ModelSource } from "../llm/models.ts";
+import type { ServerProvider } from "../llm/providers.ts";
+import { STT_LANGUAGES, STT_PRECISIONS, TTS_MODELS, type TtsModelChoice } from "../voice/languages.ts";
+import type { ChatTarget } from "./chatTarget.ts";
 import { useT, type MessageKey } from "./i18n.ts";
-import { AlertIcon, CloseIcon } from "./icons.tsx";
+import { CloseIcon } from "./icons.tsx";
 import { ModelPicker } from "./ModelPicker.tsx";
-import { DEFAULT_SETTINGS, type Settings } from "./settings.ts";
+import { ProviderFields } from "./ProviderFields.tsx";
+import { DEFAULT_SETTINGS, type ApiKeys, type Settings } from "./settings.ts";
 
 function Section({ title, children }: { title: string; children: ReactNode }): ReactElement {
   return (
@@ -79,14 +82,26 @@ export interface SettingsDrawerProps {
   onClose(): void;
   settings: Settings;
   update(patch: Partial<Settings>): void;
-  effectiveBackend: BackendKind;
+  /** where chat requests go now (backend, provider, model) */
+  target: ChatTarget;
   proxyAvailable: boolean;
-  defaultModel: string;
-  apiKey: string;
-  setApiKey(v: string): void;
-  remember: boolean;
-  setRemember(v: boolean): void;
+  /** the demo server's providers */
+  serverProviders: ServerProvider[];
+  /** the direct providers' keys */
+  keys: ApiKeys;
+  /** TTS models whose pack this server is known not to have (from /api/config's pack list) */
+  missingTts: TtsModelChoice[];
   workerSupported: boolean;
+}
+
+/** where the model picker gets its list for a target */
+function modelSource(target: ChatTarget, keys: ApiKeys): ModelSource {
+  if (target.kind === "openrouter") return { kind: "openrouter" };
+  if (target.backend === "direct" && target.direct) {
+    const id = target.direct.id;
+    return { kind: "direct", baseUrl: target.direct.baseUrl, getKey: () => keys.get(id) };
+  }
+  return { kind: "proxy", provider: target.providerId };
 }
 
 export function SettingsDrawer(p: SettingsDrawerProps): ReactElement | null {
@@ -94,8 +109,11 @@ export function SettingsDrawer(p: SettingsDrawerProps): ReactElement | null {
   const s = p.settings;
   const panel = useRef<HTMLDivElement>(null);
   const returnFocus = useRef<Element | null>(null);
-  const keyId = useId();
   const promptId = useId();
+  const [addingProvider, setAddingProvider] = useState(false);
+  useEffect(() => {
+    if (!p.open) setAddingProvider(false); // a half-filled form does not come back with the drawer
+  }, [p.open]);
   const tokensId = useId();
   const seedId = useId();
 
@@ -134,7 +152,8 @@ export function SettingsDrawer(p: SettingsDrawerProps): ReactElement | null {
 
   if (!p.open) return null;
 
-  const backendOptions: { value: Settings["backend"]; kind: BackendKind; disabled?: boolean; hint: string }[] = [
+  const target = p.target;
+  const backendOptions: { value: Settings["backend"]; kind: ChatTarget["backend"]; disabled?: boolean; hint: string }[] = [
     { value: "proxy", kind: "proxy", disabled: !p.proxyAvailable, hint: p.proxyAvailable ? t("backend.proxy.hint") : t("backend.proxy.off") },
     { value: "direct", kind: "direct", hint: t("backend.direct.hint") },
     { value: "echo", kind: "echo", hint: t("backend.echo.hint") },
@@ -155,12 +174,12 @@ export function SettingsDrawer(p: SettingsDrawerProps): ReactElement | null {
               <span className="field__label">{t("settings.backend")}</span>
               <div className="segmented">
                 {backendOptions.map((o) => (
-                  <label key={o.value} className={`segmented__item${p.effectiveBackend === o.kind ? " is-checked" : ""}${o.disabled ? " is-disabled" : ""}`}>
+                  <label key={o.value} className={`segmented__item${target.backend === o.kind ? " is-checked" : ""}${o.disabled ? " is-disabled" : ""}`}>
                     <input
                       type="radio"
                       name="backend"
                       value={o.value}
-                      checked={p.effectiveBackend === o.kind}
+                      checked={target.backend === o.kind}
                       disabled={o.disabled}
                       onChange={() => p.update({ backend: o.value })}
                     />
@@ -171,42 +190,27 @@ export function SettingsDrawer(p: SettingsDrawerProps): ReactElement | null {
               </div>
             </div>
 
-            {p.effectiveBackend === "direct" && (
-              <div className="field key-field">
-                <label className="field__label" htmlFor={keyId}>
-                  {t("settings.apiKey")}
-                </label>
-                <input
-                  id={keyId}
-                  className="input"
-                  type="password"
-                  autoComplete="off"
-                  spellCheck={false}
-                  placeholder="sk-or-…"
-                  value={p.apiKey}
-                  onChange={(e) => p.setApiKey(e.currentTarget.value.trim())}
-                />
-                <p className="callout callout--warning">
-                  <AlertIcon width={16} height={16} />
-                  <span>{t("settings.apiKeyWarning")}</span>
-                </p>
-                <Check label={t("settings.rememberKey")} hint={t("settings.rememberKeyOff")} checked={p.remember} onChange={p.setRemember} />
-                {p.apiKey && (
-                  <button
-                    type="button"
-                    className="link-button"
-                    onClick={() => {
-                      p.setApiKey("");
-                      p.setRemember(false);
-                    }}
-                  >
-                    {t("settings.forgetKey")}
-                  </button>
-                )}
-              </div>
+            {target.backend === "proxy" && p.serverProviders.length > 1 && (
+              <Select
+                label={t("settings.provider")}
+                value={target.providerId}
+                options={p.serverProviders.map((x) => ({ value: x.id, label: x.name }))}
+                onChange={(proxyProvider) => p.update({ proxyProvider })}
+              />
             )}
+            {target.backend === "proxy" && p.serverProviders.length === 1 && <p className="field__hint">{t("settings.provider.serverOne", { provider: p.serverProviders[0].name })}</p>}
 
-            {p.effectiveBackend !== "echo" && <ModelPicker value={s.model} defaultModel={p.defaultModel} onChange={(model) => p.update({ model })} />}
+            {target.backend === "direct" && <ProviderFields settings={s} update={p.update} keys={p.keys} adding={addingProvider} setAdding={setAddingProvider} />}
+
+            {target.backend !== "echo" && !(target.backend === "direct" && addingProvider) && (
+              <ModelPicker
+                key={`${target.modelKey}|${target.direct?.baseUrl ?? ""}`}
+                value={s.models[target.modelKey] ?? ""}
+                defaultModel={target.defaultModel}
+                source={modelSource(target, p.keys)}
+                onChange={(model) => p.update({ models: { ...s.models, [target.modelKey]: model.trim() ? model : "" } })}
+              />
+            )}
             <Range label={t("settings.temperature")} value={s.temperature} min={0} max={1.5} step={0.05} format={(v) => v.toFixed(2)} onChange={(temperature) => p.update({ temperature })} />
             <div className="field">
               <label className="field__label" htmlFor={tokensId}>
@@ -234,6 +238,15 @@ export function SettingsDrawer(p: SettingsDrawerProps): ReactElement | null {
           </Section>
 
           <Section title={t("settings.tts")}>
+            <Select
+              label={t("settings.ttsModel")}
+              value={s.ttsModel}
+              options={TTS_MODELS.map((v) => ({ value: v, label: `${t(`ttsModel.${v}` as MessageKey)}${p.missingTts.includes(v) ? ` · ${t("settings.ttsModel.notHere")}` : ""}` }))}
+              onChange={(ttsModel) => p.update({ ttsModel })}
+            />
+            <p className={`field__hint${p.missingTts.includes(s.ttsModel) ? " is-warning" : ""}`}>
+              {p.missingTts.includes(s.ttsModel) ? t("settings.ttsModel.missing") : t(`ttsModel.${s.ttsModel}.hint` as MessageKey)}
+            </p>
             <Range label={t("settings.speed")} value={s.ttsSpeed} min={0.7} max={1.3} step={0.05} format={(v) => `${v.toFixed(2)}×`} onChange={(ttsSpeed) => p.update({ ttsSpeed })} />
             <div className="field">
               <label className="field__label" htmlFor={seedId}>
@@ -280,7 +293,8 @@ export function SettingsDrawer(p: SettingsDrawerProps): ReactElement | null {
           <button
             type="button"
             className="button button--ghost"
-            onClick={() => p.update({ ...DEFAULT_SETTINGS, uiLang: s.uiLang, theme: s.theme, handsFree: s.handsFree })}
+            // the endpoints the user added are configuration, not tuning: a reset keeps them (their keys are not settings)
+            onClick={() => p.update({ ...DEFAULT_SETTINGS, uiLang: s.uiLang, theme: s.theme, handsFree: s.handsFree, customProviders: s.customProviders })}
           >
             {t("settings.reset")}
           </button>

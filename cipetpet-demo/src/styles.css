@@ -1160,6 +1160,24 @@ mark.speaking {
   color: var(--warning);
 }
 
+.link-button--danger {
+  color: var(--danger);
+}
+
+.provider-form {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.provider-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-top: 8px;
+}
+
 .picker {
   position: relative;
   margin: 10px 0;

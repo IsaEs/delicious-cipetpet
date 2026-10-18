@@ -83,9 +83,21 @@ SOFTWARE.
 `;
 
 /** The NOTICE file of a release. The ONNX Runtime licence text is read from onnxruntime-web's LICENSE file
- * when the package ships one (1.30.0 does not), else the MIT text of the ONNX Runtime repository is used. */
-export function noticeText(ortVersion: string, ortLicense?: string): string {
+ * when the package ships one (1.30.0 does not), else the MIT text of the ONNX Runtime repository is used.
+ * `models`: the model ids of the release's packs; EMA Lightning is credited only when one of its packs is there
+ * (so the NOTICE of a release without it does not change). */
+export function noticeText(ortVersion: string, ortLicense?: string, models: readonly string[] = []): string {
   const license = (ortLicense ?? MIT_ORT).replace(/\r\n/g, "\n").replace(/\s+$/, "") + "\n";
+  const ema = models.includes("ema-lightning")
+    ? `
+EMA Lightning (ema-lightning-*.cpet)
+  Turkish text to speech by Canberk Aslan. Apache License 2.0.
+  Source: https://huggingface.co/canberkkkkkk/ema-lightning (code: https://github.com/canberk7/ema-lightning)
+  The packs contain the ONNX export of those weights (ema-lightning's web/export_onnx.py), converted into the .cpet
+  container, and normalizer-tr by Erdem Tuna (Apache License 2.0, https://github.com/erdemtuna/normalizer-tr)
+  compiled to WebAssembly.
+`
+    : "";
   return `cipetpet release files
 ======================
 
@@ -106,7 +118,7 @@ Duyu-small (duyu-small-*.cpet)
   The packs contain the ONNX graphs, feature tables and tokenizer of that repository, converted into the .cpet
   container. Its encoder design (a Conformer applied in 3 shared refinement passes with a sparse acoustic memory)
   is taken from balbal, described by its author at https://erayy.com/balbal-blog.
-
+${ema}
 ONNX Runtime ${ortVersion} (ort-wasm-simd-threaded*.mjs, ort-wasm-simd-threaded*.wasm)
   Copyright (c) Microsoft Corporation. MIT License. https://github.com/microsoft/onnxruntime
   The files are copied unchanged from the onnxruntime-web ${ortVersion} npm package. The licence text:
@@ -274,7 +286,10 @@ export function assembleRelease(opts: AssembleOptions): AssembleResult {
   const licenseBytes = readFileSync(licensePath);
   if (!licenseBytes.toString("utf8").includes("Apache License")) throw new ReleaseError(`${licensePath} is not the Apache-2.0 text`);
   const ortLicensePath = join(ortDir, "LICENSE");
-  const notice = Buffer.from(noticeText(ortVersion, existsSync(ortLicensePath) ? readFileSync(ortLicensePath, "utf8") : undefined), "utf8");
+  const notice = Buffer.from(
+    noticeText(ortVersion, existsSync(ortLicensePath) ? readFileSync(ortLicensePath, "utf8") : undefined, manifest.packs.map((p) => p.model)),
+    "utf8",
+  );
   const docSources = new Map<string, Buffer>([
     ["LICENSE", licenseBytes],
     ["NOTICE", notice],

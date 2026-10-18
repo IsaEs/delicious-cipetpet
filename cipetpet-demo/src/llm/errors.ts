@@ -26,9 +26,9 @@ function codeFor(status: number): ChatErrorCode {
 }
 
 const LEAD: Record<ChatErrorCode, string> = {
-  invalid_key: "OpenRouter rejected the request: invalid API key",
-  credits: "OpenRouter: not enough credits for this request (402)",
-  rate_limited: "OpenRouter: rate limited (429), wait a moment and try again",
+  invalid_key: "The provider rejected the request: invalid API key",
+  credits: "Not enough credits for this request (402)",
+  rate_limited: "The provider rate limited the request (429), wait a moment and try again",
   not_configured: "The chat proxy is not available",
   bad_request: "The request was rejected",
   moderation: "The request was flagged by moderation",
@@ -52,7 +52,7 @@ export async function errorFromResponse(res: Response): Promise<ChatError> {
     detail = text.trim().slice(0, 300) || undefined;
   }
   const code = codeFor(res.status);
-  // 503 from our own proxy carries the full explanation ("set OPENROUTER_API_KEY ..."): show it as is
+  // 503 from our own proxy carries the full explanation ("set OPENROUTER_API_KEY or LLM_PROVIDERS ..."): show it as is
   const message =
     code === "not_configured" && detail
       ? detail

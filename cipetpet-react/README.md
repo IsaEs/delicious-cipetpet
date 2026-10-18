@@ -1,7 +1,11 @@
 # cipetpet-react
 
-React hooks and components for [cipetpet](../cipetpet): Turkish **text to speech** (Antalia-2 Mini, 48 kHz)
-and **speech recognition** (Duyu-small, Turkish + English, 16 kHz) running in the browser on ONNX Runtime Web.
+React hooks and components for [cipetpet](../cipetpet): Turkish **text to speech** (Antalia-2 Mini or EMA Lightning,
+48 kHz) and **speech recognition** (Duyu-small, Turkish + English, 16 kHz) running in the browser on ONNX Runtime Web.
+
+The text-to-speech hooks load whichever model the pack holds (`loadTextToSpeech` / `createTtsWorker` in the core read
+the pack's header): give them `antalia-mini-*.cpet` or `ema-lightning-fp32.cpet`, nothing else changes. EMA Lightning
+ignores Antalia's `steps`, `cfg` and `temperature`; its `speed` goes from 0.25 to 4.
 
 * Headless first: `useTextToSpeech`, `useSpeechToText`, plus the lower-level `useAntalia` / `useDuyu`.
 * One model instance per pack, shared by every component, refcounted, kept for a grace period after the last
@@ -219,7 +223,7 @@ Options: `ModelOptions` + `autoLoad` (default `true`) + `disposeDelayMs` + synth
 | `status` | `"idle" \| "loading" \| "ready" \| "error"` | model state |
 | `progress` | `{loaded, total} \| null` | pack download progress (`total` 0 when unknown) |
 | `error` | `Error \| null` | load error |
-| `model` | `AntaliaMini \| AntaliaWorker \| null` | the shared instance |
+| `model` | `AntaliaMini \| EmaLightning \| TtsWorker \| null` | the shared instance (`model.info.id` tells which) |
 | `load()` / `retry()` | `() => Promise<model>` | load now (with `autoLoad: false`) / again after an error |
 | `speak(text, opts?)` | `Promise<void>` | stream + play; resolves when playback ends or is cancelled |
 | `synthesize(text, opts?)` | `Promise<SynthesisResult>` | whole audio, no playback; AbortError when stopped |
@@ -250,7 +254,8 @@ Options: `ModelOptions` + `autoLoad` + `disposeDelayMs` + transcription defaults
 ### `useAntalia(options?)` / `useDuyu(options?)`
 
 Just the model: `{ status, progress, error, model, load, retry }`. Use them to call the core API directly
-(`model.stream()`, `model.transcribe()` with your own options).
+(`model.stream()`, `model.transcribe()` with your own options). Despite its name, `useAntalia` returns whichever
+text-to-speech model the pack holds (Antalia-2 Mini or EMA Lightning).
 
 ### Lifecycle guarantees
 

@@ -1,7 +1,7 @@
 {
   "name": "cipetpet-react",
   "version": "0.1.0",
-  "description": "React hooks and components for cipetpet: Turkish text to speech (Antalia-2 Mini) and speech recognition (Duyu-small) in the browser.",
+  "description": "React hooks and components for cipetpet: Turkish text to speech (Antalia-2 Mini, EMA Lightning) and speech recognition (Duyu-small) in the browser.",
   "license": "Apache-2.0",
   "type": "module",
   "sideEffects": false,
