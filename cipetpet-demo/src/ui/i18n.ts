@@ -92,7 +92,7 @@ const tr = {
   "err.network": "Ağ hatası",
   "err.stream": "Yanıt akışı kesildi",
 
-  "banner.noProxy": "Sunucuda OpenRouter anahtarı yok: şimdilik çevrimdışı yankı modu kullanılıyor. Gerçek sohbet için anahtarı .env.local dosyasına ekleyin ya da Ayarlar'dan doğrudan anahtar girin.",
+  "banner.noProxy": "Burada ortak bir OpenRouter anahtarı yok: şimdilik çevrimdışı yankı modu kullanılıyor. Gerçek sohbet için Ayarlar'dan kendi OpenRouter anahtarınızı girin (anahtar yalnızca tarayıcınızda kalır). Demoyu kendiniz çalıştırıyorsanız anahtarı .env.local dosyasına da yazabilirsiniz.",
   "banner.openSettings": "Ayarları aç",
 
   "settings.title": "Ayarlar",
@@ -250,7 +250,7 @@ const en: Record<MessageKey, string> = {
   "err.network": "Network error",
   "err.stream": "The reply stream broke off",
 
-  "banner.noProxy": "The server has no OpenRouter key: using the offline echo mode for now. For a real conversation put the key in .env.local, or paste one in Settings (direct mode).",
+  "banner.noProxy": "There is no shared OpenRouter key here: using the offline echo mode for now. For a real conversation paste your own OpenRouter key in Settings (it stays in your browser). If you run the demo yourself you can also put the key in .env.local.",
   "banner.openSettings": "Open settings",
 
   "settings.title": "Settings",

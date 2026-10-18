@@ -13,8 +13,15 @@ import { after, before, beforeEach, describe, test } from "node:test";
 import { FAKE_ORT_VERSION, makeRelease, ROOT, TEST_OUT, writeFakeOrt, type SyntheticRelease } from "./helpers/synthetic-release.js";
 import { makeCert } from "./helpers/tls.js";
 
-const CLI = join(ROOT, "bin/cipetpet.mjs");
 const WORK = join(TEST_OUT, `pull-cli-${process.pid}`);
+// The CLI runs from a copy with its package.json but WITHOUT bin/release-digest.json. A maintainer who made the real digest for
+// a release (RELEASES.md, "for maintainers") would otherwise turn every synthetic release below, which is also version 0.1.0,
+// into a digest mismatch (exit 3). The test that needs a digest makes its own copy of the CLI.
+const CLI_PKG = join(TEST_OUT, `pull-cli-bin-${process.pid}`);
+mkdirSync(join(CLI_PKG, "bin"), { recursive: true });
+copyFileSync(join(ROOT, "bin/cipetpet.mjs"), join(CLI_PKG, "bin/cipetpet.mjs"));
+copyFileSync(join(ROOT, "package.json"), join(CLI_PKG, "package.json"));
+const CLI = join(CLI_PKG, "bin/cipetpet.mjs");
 
 interface Hit {
   method: string;
@@ -69,6 +76,7 @@ before(async () => {
 after(async () => {
   await new Promise((ok) => server.close(ok));
   rmSync(WORK, { recursive: true, force: true });
+  rmSync(CLI_PKG, { recursive: true, force: true });
 });
 beforeEach(() => {
   files = new Map(readdirSync(join(rel.work, "release")).map((f) => [f, readFileSync(join(rel.work, "release", f))]));
@@ -749,6 +757,22 @@ describe("cipetpet pull: what it tells you to write", () => {
     assert.match(r.stdout, /<CipetpetProvider tts=\{\{ source: "\/cipetpet\/antalia-mini-int8\.cpet", backend: "webgpu", wasmPaths: "\/cipetpet\/ort\/" \}\} stt=\{\{ source: "\/cipetpet\/duyu-small-int8\.cpet", backend: "webgpu", wasmPaths: "\/cipetpet\/ort\/", useWorker: true \}\}>/);
     const plain = await pull(project(), "--no-docs");
     assert.ok(!/CipetpetProvider|backend:/.test(plain.stdout), "no React form without cipetpet-react, no backend without --webgpu");
+  });
+
+  test("two variants of one model give one example per model: no constant declared twice, no repeated provider prop", async () => {
+    const p = project();
+    mkdirSync(join(p.cwd, "node_modules/cipetpet-react"), { recursive: true });
+    writeFileSync(join(p.cwd, "node_modules/cipetpet-react/package.json"), '{"name":"cipetpet-react"}');
+    const r = await pull(p, "--no-docs", "--packs", "antalia-mini-int8,duyu-small-int8,duyu-small-q4");
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.equal((r.stdout.match(/const stt = /g) ?? []).length, 1, r.stdout);
+    assert.equal((r.stdout.match(/ stt=\{\{/g) ?? []).length, 1, r.stdout);
+    assert.match(r.stdout, /DuyuSmall\.load\("\/cipetpet\/duyu-small-int8\.cpet"/, "the default variant is the one shown");
+    assert.match(r.stdout, /The other variants you pulled load the same way/);
+    // only q4 of that model: it is then the example
+    const q = await pull(project(), "--no-docs", "--packs", "duyu-small-q4");
+    assert.match(q.stdout, /DuyuSmall\.load\("\/cipetpet\/duyu-small-q4\.cpet"/);
+    assert.ok(!/The other variants/.test(q.stdout));
   });
 });
 

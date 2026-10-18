@@ -13,7 +13,8 @@
     "build": "node scripts/build.mjs",
     "start": "node server/server.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:pages": "node scripts/build-pages.mjs"
   },
   "dependencies": {
     "cipetpet": "file:../cipetpet",

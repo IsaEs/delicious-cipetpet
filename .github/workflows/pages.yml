@@ -1,0 +1,88 @@
+# Publishes the voice-chat demo (cipetpet-demo) as a static site on GitHub Pages.
+#
+# The site has no server and no API key: the page runs in echo mode, or the visitor types their own OpenRouter key.
+# The model packs and the ONNX Runtime files are not in git; scripts/build-pages.mjs pulls them from this project's
+# GitHub Release (the one that matches the version in cipetpet/package.json, checked against the release's hashes).
+# GitHub Pages cannot send the COOP/COEP headers WASM threads need, so the site registers a service worker
+# (static/coi-sw.js) that adds them.
+#
+# Maintainer notes:
+#   * Needs Settings > Pages > Source: GitHub Actions. With a custom domain, set it BEFORE the first deploy: the site must
+#     be served from the root of its host (its asset paths are absolute), and enforce HTTPS (service worker, microphone).
+#   * The site is built from the GitHub Release of the version in cipetpet/package.json. After a version bump push the
+#     tag first (so the release exists), then run this workflow by hand: a push of the bump alone fails at the download.
+#
+# Two jobs: `build` has a read-only token and runs the repository's code; `deploy` holds the Pages permissions
+# and only runs the deploy action. All actions are pinned to full commit SHAs (the version is in the comment).
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cipetpet-demo/**"
+      - "cipetpet-react/src/**"
+      - "cipetpet/src/**"
+      - "cipetpet/package.json"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            cipetpet/package-lock.json
+            cipetpet-demo/package-lock.json
+
+      # The demo bundles the TypeScript sources of ../cipetpet and ../cipetpet-react (esbuild aliases), so it needs
+      # the core's dependencies (onnxruntime-web) and its own, but no build of the other packages.
+      - name: cipetpet - install
+        working-directory: cipetpet
+        run: npm ci
+      - name: cipetpet-demo - install
+        working-directory: cipetpet-demo
+        run: npm ci
+
+      - name: cipetpet-demo - build the static site
+        working-directory: cipetpet-demo
+        run: npm run build:pages
+
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: cipetpet-demo/pages
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

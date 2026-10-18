@@ -675,12 +675,22 @@ function printSnippet(dir, packs, { withOrt, webgpu, ortVersion }) {
   const wasmPaths = withOrt ? `${p}ort/` : `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ortVersion}/dist/`;
   const optList = [...(webgpu && withOrt ? ['backend: "webgpu"'] : []), `wasmPaths: "${wasmPaths}"`];
   const opts = `{ ${optList.join(", ")} }`;
-  const classes = [...new Set(packs.map((a) => MODEL_CLASSES[a.model]?.[0]).filter(Boolean))];
-  if (classes.length) console.log(`  import { ${classes.join(", ")} } from "cipetpet";`);
+  // one example per model: two variants of the same model (--packs all) would declare the same constant twice
+  const shown = new Map();
   for (const a of packs) {
+    if (!MODEL_CLASSES[a.model]) continue;
+    const cur = shown.get(a.model);
+    if (!cur || (DEFAULT_PACKS.includes(a.name) && !DEFAULT_PACKS.includes(cur.name))) shown.set(a.model, a);
+  }
+  const examples = [...shown.values()];
+  const classes = [...new Set(examples.map((a) => MODEL_CLASSES[a.model][0]))];
+  if (classes.length) console.log(`  import { ${classes.join(", ")} } from "cipetpet";`);
+  for (const a of examples) {
     const c = MODEL_CLASSES[a.model];
-    if (!c) continue;
     console.log(`  const ${c[1]} = await ${c[0]}.load("${p}${a.name}", ${opts});`);
+  }
+  if (examples.length < packs.filter((a) => MODEL_CLASSES[a.model]).length) {
+    console.log("\nThe other variants you pulled load the same way: use their file name instead.");
   }
   if (!withOrt) {
     console.log(`\nNo ONNX Runtime files were pulled: wasmPaths above points to the matching onnxruntime-web ${ortVersion} on jsDelivr; use the URL of your own copy of its dist/ folder if you have one.`);
@@ -688,8 +698,7 @@ function printSnippet(dir, packs, { withOrt, webgpu, ortVersion }) {
   if (webgpu && withOrt) console.log('\nbackend: "webgpu" falls back to the wasm files when the browser has no WebGPU.');
   if (installedAbove("cipetpet-react")) {
     console.log("\nWith cipetpet-react, wasmPaths goes into the model options of the provider:\n");
-    const entries = packs
-      .filter((a) => MODEL_CLASSES[a.model])
+    const entries = examples
       .map((a) => {
         const kind = MODEL_CLASSES[a.model][1];
         const extra = kind === "stt" ? ", useWorker: true" : "";
