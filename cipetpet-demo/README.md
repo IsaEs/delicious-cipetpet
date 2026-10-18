@@ -56,9 +56,9 @@ conversation export). The API must allow requests from the page's origin (CORS):
 ## Voice models
 
 Settings → Speech synthesis → Voice model switches between **Antalia-2 Mini** (`antalia-mini-mixed.cpet`, ~23 MB) and
-**EMA Lightning** (`ema-lightning-fp32.cpet`, ~34 MB). The EMA Lightning pack is built from ema-lightning-web's export
-(`npm run packs -- --only ema-lightning-fp32 --ema ../ema-lightning-web/web` in `../cipetpet`); the page marks a voice
-whose pack the server does not have.
+**EMA Lightning** (`ema-lightning-fp32.cpet`, ~34 MB). Both packs come out of `npm run upstream && npm run packs` in
+`../cipetpet` (and out of the releases from the next version on); the page marks a voice whose pack the server does not
+have.
 
 ## Host it as a static site
 

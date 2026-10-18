@@ -3,10 +3,13 @@
 //   npx tsx tools/build-packs.ts [--out packs] [--only antalia-mini-mixed,duyu-small-int8] [--embed-runtime]
 //                                [--hash-names] [--antalia DIR] [--duyu DIR] [--ema DIR]
 //
-// EMA Lightning has no pinned upstream with ONNX files: its graphs come from ema-lightning-web's export
-// (web/export_onnx.py) and its text normaliser from that project's normalizer-tr WebAssembly build. --ema takes
-// that web/ folder (models/ + normalizer/pkg/) or a copy of its dist/; the default is ../ema-lightning-web/web.
-// When the folder is missing the ema-lightning pack is skipped (unless --only asks for it).
+// EMA Lightning's graphs come from ema-lightning-web's export (web/export_onnx.py, reproducible byte for byte from
+// the Hugging Face weights) and its text normaliser from that project's normalizer-tr WebAssembly build. --ema takes
+// a folder with those files: .upstream/ema-lightning (flat: the published export tedash34/ema-lightning-onnx,
+// pinned in tools/upstream.lock.json and fetched by `npm run upstream`), ema-lightning-web's web/ folder (models/ +
+// normalizer/pkg/) or a copy of its dist/. The default is the first of .upstream/ema-lightning and ../ema-lightning-web/web that holds a complete export;
+// without one the ema-lightning pack is skipped (unless --only asks for it). An ema-lightning.json next to the files
+// (the published export has one) gives the package version and the normalizer-tr version for the pack header.
 //
 // Packs are deterministic: the same inputs give byte-identical files (the printed SHA-256 shows it).
 //
@@ -231,8 +234,22 @@ export function emaFiles(dir: string): { models: string; normalizer: string } | 
   return models && normalizer ? { models, normalizer } : null;
 }
 
-/** The ema-lightning package version from the pyproject.toml next to the export, if there is one. */
-function emaVersion(dir: string): string {
+/** ema-lightning.json of a published export: which ema-lightning release and normalizer-tr build the files match. */
+interface EmaProvenance {
+  version?: string;
+  normalizer?: { crate?: string; version?: string };
+}
+
+function emaProvenance(dir: string, files: { models: string }): EmaProvenance {
+  for (const candidate of [join(files.models, "ema-lightning.json"), join(dir, "ema-lightning.json")]) {
+    if (existsSync(candidate)) return json(candidate) as EmaProvenance;
+  }
+  return {};
+}
+
+/** The ema-lightning package version: ema-lightning.json, else the pyproject.toml next to the export, if any. */
+function emaVersion(dir: string, provenance: EmaProvenance): string {
+  if (typeof provenance.version === "string" && provenance.version) return provenance.version;
   for (const candidate of [join(dir, "pyproject.toml"), join(dir, "..", "pyproject.toml"), join(dir, "../..", "pyproject.toml")]) {
     if (!existsSync(candidate)) continue;
     const text = readFileSync(candidate, "utf8");
@@ -249,10 +266,11 @@ function emaPlans(dir: string | undefined): PackPlan[] {
   return [{
     name: EMA_PACK,
     build: async () => {
+      const provenance = emaProvenance(dir, files);
       const model: PackModelInfo = {
         id: "ema-lightning",
         name: "EMA Lightning",
-        version: emaVersion(dir),
+        version: emaVersion(dir, provenance),
         task: "text-to-speech",
         variant: "fp32",
         license: "Apache-2.0",
@@ -270,7 +288,8 @@ function emaPlans(dir: string | undefined): PackPlan[] {
         // unlike ORT's binary, the normaliser is mostly data tables: gzip takes it to about a third
         { name: "frontend/normalizer.wasm", type: "wasm", data: normalizer, encoding: "auto" },
       ];
-      return { model, meta: { sampleRate: config.sample_rate }, entries };
+      const normalizerVersion = provenance.normalizer?.version;
+      return { model, meta: { sampleRate: config.sample_rate, ...(normalizerVersion ? { normalizer: `normalizer-tr ${normalizerVersion}` } : {}) }, entries };
     },
   }];
 }
@@ -285,7 +304,7 @@ export async function buildPacks(opts: BuildOptions): Promise<BuiltPack[]> {
   if (opts.only) {
     const unknown = opts.only.filter((n) => !plans.some((p) => p.name === n));
     if (unknown.includes(EMA_PACK)) {
-      throw new Error(`${EMA_PACK} needs an EMA Lightning export: --ema DIR (ema-lightning-web's web/ folder with models/ and normalizer/pkg/)${opts.emaDir ? `; ${opts.emaDir} has none` : ""}`);
+      throw new Error(`${EMA_PACK} needs an EMA Lightning export: npm run upstream (-> .upstream/ema-lightning), or --ema DIR (ema-lightning-web's web/ folder with models/ and normalizer/pkg/)${opts.emaDir ? `; ${opts.emaDir} has none` : ""}`);
     }
     if (unknown.length) throw new Error(`unknown pack(s): ${unknown.join(", ")} (available: ${plans.map((p) => p.name).join(", ")})`);
   }
@@ -347,7 +366,7 @@ function parseArgs(argv: string[]): BuildOptions {
     out: join(ROOT, "packs"),
     antaliaDir: join(ROOT, ".upstream/antalia-mini"),
     duyuDir: join(ROOT, ".upstream/duyu-small"),
-    emaDir: join(ROOT, "../ema-lightning-web/web"),
+    emaDir: [join(ROOT, ".upstream/ema-lightning"), join(ROOT, "../ema-lightning-web/web")].find((d) => emaFiles(d)),
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];

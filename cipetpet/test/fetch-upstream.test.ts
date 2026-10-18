@@ -147,6 +147,11 @@ describe("fetch-upstream", () => {
     for (const p of ["models/manifest.json", "assets/frontend-data.json.gz"]) assert.ok(paths("antalia-mini").has(p), p);
     for (const v of ["int8", "q4"]) for (const g of ["encoder_pre", "encoder_pass", "encoder_post", "decoder"]) assert.ok(paths("duyu-small").has(`${v}/${g}.onnx`), `${v}/${g}`);
     for (const p of ["config.json", "engine.json", "fbank.npz", "passes.npz", "spm.model"]) assert.ok(paths("duyu-small").has(p), p);
+    // the ONNX export of EMA Lightning's weights + normalizer-tr's WebAssembly (build-packs reads them flat)
+    assert.equal(by["ema-lightning"].commit, "728d44d07a6b51aa939d70a9fa486e117745c0cc");
+    assert.equal(by["ema-lightning"].repo, "tedash34/ema-lightning-onnx");
+    assert.equal(by["ema-lightning"].kind, "model");
+    for (const p of ["text.onnx", "sound.onnx", "decoder.onnx", "config.json", "normalizer_tr_wasm_bg.wasm", "ema-lightning.json"]) assert.ok(paths("ema-lightning").has(p), p);
     for (const r of real.repos) for (const f of r.files) assert.ok(f.lfs ? true : /^[0-9a-f]{40}$/.test(f.gitBlob ?? ""), `${r.id}/${f.path}`);
   });
 

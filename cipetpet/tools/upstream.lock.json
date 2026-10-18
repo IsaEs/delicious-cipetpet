@@ -181,6 +181,52 @@
           "lfs": true
         }
       ]
+    },
+    {
+      "id": "ema-lightning",
+      "kind": "model",
+      "repo": "tedash34/ema-lightning-onnx",
+      "commit": "728d44d07a6b51aa939d70a9fa486e117745c0cc",
+      "files": [
+        {
+          "path": "config.json",
+          "bytes": 456,
+          "sha256": "293a43a887b7cbdecd458e3961bffb440bb385957eaec7c14a35378fa6f1de8b",
+          "lfs": false,
+          "gitBlob": "5a213006e72ac7e7a82cf8c8ba8b510184ab1def"
+        },
+        {
+          "path": "decoder.onnx",
+          "bytes": 12040984,
+          "sha256": "8246d10b495a5ead733f5478b7c732dc39f4662e08b314cb84a4758bbc1db13d",
+          "lfs": true
+        },
+        {
+          "path": "ema-lightning.json",
+          "bytes": 760,
+          "sha256": "0379f89dcca881f75bc057aec836ef2a63a3b2d44970220d514c090a98fc5a8a",
+          "lfs": false,
+          "gitBlob": "e1a5f43776113732938d4f86dd388be57011e7eb"
+        },
+        {
+          "path": "normalizer_tr_wasm_bg.wasm",
+          "bytes": 1416575,
+          "sha256": "946ba22f3f610357d192f84963d9b446a3828c25b847f29c03bca0cf64f9a341",
+          "lfs": true
+        },
+        {
+          "path": "sound.onnx",
+          "bytes": 18134844,
+          "sha256": "3924d67f00c65d6b4c0632cd3c152fef9987df4e29f738533d357036ce3f6420",
+          "lfs": true
+        },
+        {
+          "path": "text.onnx",
+          "bytes": 4808531,
+          "sha256": "bf6bc2bb7bcd7f61c2d1e58fced4e58b92ea6806e07befcabf0824d7d33a8ab8",
+          "lfs": true
+        }
+      ]
     }
   ]
 }

@@ -43,8 +43,8 @@ const tag = arg("--tag") ?? `v${coreVersion}`;
 
 /** the packs the demo can ask for: the TTS pack and both STT precisions (see src/voice/cipetpet.ts) */
 const PACKS = ["antalia-mini-mixed", "duyu-small-int8", "duyu-small-q4"];
-/** packs the page can also use, copied when the source has them (EMA Lightning has no pinned upstream yet, so a
- * release may not carry it); the page marks a voice whose pack is missing */
+/** packs the page can also use, copied when the source has them (releases before EMA Lightning was pinned do not carry
+ * it); the page marks a voice whose pack is missing */
 const OPTIONAL_PACKS = ["ema-lightning-fp32"];
 
 const sri = (file) => `sha256-${createHash("sha256").update(readFileSync(file)).digest("base64")}`;

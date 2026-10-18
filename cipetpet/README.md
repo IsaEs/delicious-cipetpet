@@ -38,13 +38,14 @@ npm run release:assets # packs + ORT files + SHA256SUMS -> release/ (what a GitH
 
 `.upstream/` (gitignored) is where `npm run packs` looks for the upstream model folders by default.
 
-**EMA Lightning** has no pinned upstream with ONNX files: its pack is built from
-[ema-lightning-web](https://github.com/canberk7/ema-lightning)'s browser export (`web/models/` from
-`web/export_onnx.py`, and normalizer-tr compiled to `web/normalizer/pkg/normalizer_tr_wasm_bg.wasm`). `npm run packs`
-picks it up from `../ema-lightning-web/web` when that folder exists, and skips it otherwise:
+**EMA Lightning**'s upstream is [tedash34/ema-lightning-onnx](https://huggingface.co/tedash34/ema-lightning-onnx): an
+ONNX export of the original weights (`web/export_onnx.py` of the ema-lightning browser port, reproducible byte for
+byte) plus normalizer-tr 0.8 compiled to WebAssembly. It is pinned in `tools/upstream.lock.json` like the other
+models, so `npm run upstream && npm run packs` builds `packs/ema-lightning-fp32.cpet` (~34 MB) too. To build it from
+a fresh export instead (e.g. after a normalizer change in the browser port), pass the folder:
 
 ```sh
-npm run packs -- --only ema-lightning-fp32 --ema ../ema-lightning-web/web   # -> packs/ema-lightning-fp32.cpet (~34 MB)
+npm run packs -- --only ema-lightning-fp32 --ema ../ema-lightning-web/web
 ```
 
 ## Quick start (core)

@@ -27,8 +27,11 @@ verified against the LFS pointers):
 .upstream/duyu-small/{fbank.npz,passes.npz,spm.model,engine.json,config.json}
 ```
 
-The EMA Lightning files have no pinned upstream: `npm run packs` reads them from `../ema-lightning-web/web`
-(`--ema DIR`), and skips the pack when the folder is missing.
+The EMA Lightning files are an ONNX export of the Hugging Face weights (canberkkkkkk/ema-lightning, reproduced byte
+for byte by `web/export_onnx.py`) plus normalizer-tr compiled to WebAssembly, published flat with an
+`ema-lightning.json` provenance file at tedash34/ema-lightning-onnx and pinned in the lock. `npm run packs` reads them
+from `.upstream/ema-lightning`, else from `../ema-lightning-web/web` (`--ema DIR` for any other folder), and skips the
+pack when neither holds a complete export.
 
 Graph signatures (all verified with onnx):
 

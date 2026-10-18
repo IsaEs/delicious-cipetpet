@@ -93,9 +93,9 @@ export function noticeText(ortVersion: string, ortLicense?: string, models: read
 EMA Lightning (ema-lightning-*.cpet)
   Turkish text to speech by Canberk Aslan. Apache License 2.0.
   Source: https://huggingface.co/canberkkkkkk/ema-lightning (code: https://github.com/canberk7/ema-lightning)
-  The packs contain the ONNX export of those weights (ema-lightning's web/export_onnx.py), converted into the .cpet
-  container, and normalizer-tr by Erdem Tuna (Apache License 2.0, https://github.com/erdemtuna/normalizer-tr)
-  compiled to WebAssembly.
+  The packs contain the ONNX export of those weights published at https://huggingface.co/tedash34/ema-lightning-onnx
+  (made with the browser port's web/export_onnx.py), converted into the .cpet container, and
+  normalizer-tr by Erdem Tuna (Apache License 2.0, https://github.com/erdemtuna/normalizer-tr) compiled to WebAssembly.
 `
     : "";
   return `cipetpet release files

@@ -50,14 +50,10 @@ npm run packs -- --antalia DIR --duyu DIR   # model files kept elsewhere
 
 `cipetpet/.upstream/` is gitignored; it is where `npm run packs` looks for the upstream model folders by default.
 
-The EMA Lightning pack is built from [ema-lightning-web](https://github.com/canberk7/ema-lightning)'s browser export
-(ONNX graphs + normalizer-tr's WebAssembly), which `npm run packs` picks up from `./ema-lightning-web/web` when that
-folder is checked out next to the packages (it is gitignored); it is not in the releases yet:
-
-```sh
-cd cipetpet
-npm run packs -- --only ema-lightning-fp32 --ema ../ema-lightning-web/web
-```
+The EMA Lightning pack comes from [tedash34/ema-lightning-onnx](https://huggingface.co/tedash34/ema-lightning-onnx), an
+ONNX export of [EMA Lightning](https://huggingface.co/canberkkkkkk/ema-lightning)'s weights (reproducible byte for byte
+with the browser port's `web/export_onnx.py`) plus normalizer-tr compiled to WebAssembly. It is pinned like the other
+upstreams, so `npm run upstream && npm run packs` builds it and releases from the next version on carry it.
 
 ## Quick start (core)
 

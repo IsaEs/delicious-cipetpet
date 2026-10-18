@@ -28,11 +28,12 @@ made for, and `cipetpet pull` takes exactly that version by default, so the pack
 | `antalia-mini-mixed.cpet`, `antalia-mini-fp16.cpet`, `antalia-mini-fp32.cpet` | the same model in more precise variants |
 | `duyu-small-int8.cpet` | Duyu-small (speech recognition, Turkish + English), int8 graphs. **Default.** |
 | `duyu-small-q4.cpet` | Duyu-small with 4-bit weights, smaller |
+| `ema-lightning-fp32.cpet` | EMA Lightning (Turkish text to speech, 8.6M parameters), fp32 graphs + normalizer-tr in WebAssembly |
 | `ort-wasm-simd-threaded.mjs`, `ort-wasm-simd-threaded.wasm` | ONNX Runtime Web for the default `wasm` backend |
 | `ort-wasm-simd-threaded.asyncify.mjs`, `ort-wasm-simd-threaded.asyncify.wasm` | ONNX Runtime Web for `backend: "webgpu"` |
 | `cipetpet-release.json` | the list of the files above: name, size, SHA-256, and for packs the model, variant and SRI `integrity` string |
 | `SHA256SUMS` | `sha256sum -c` file for everything above (it lists `cipetpet-release.json` too, not itself) |
-| `LICENSE`, `NOTICE` | Apache-2.0 text; credits (Antalia-2 Mini by PatientDesk AI, Duyu-small by KaanAydinli, encoder design from balbal) and the ONNX Runtime MIT notice |
+| `LICENSE`, `NOTICE` | Apache-2.0 text; credits (Antalia-2 Mini by PatientDesk AI, EMA Lightning by Canberk Aslan with normalizer-tr by Erdem Tuna, Duyu-small by KaanAydinli, encoder design from balbal) and the ONNX Runtime MIT notice |
 
 The ORT files are copied byte for byte from the `onnxruntime-web` version that the packs and the library were built
 with (`ortVersion` in `cipetpet-release.json`); they are the only ORT files the library can load. The package's
@@ -663,8 +664,9 @@ verification (`SHA256SUMS`, `cipetpet verify`).
 
 {{ASSET_TABLE}}
 
-Models: Antalia-2 Mini by PatientDesk AI (Apache-2.0), Duyu-small by KaanAydinli (Apache-2.0, encoder design from
-balbal). ONNX Runtime by Microsoft (MIT). See `NOTICE`.
+Models: Antalia-2 Mini by PatientDesk AI (Apache-2.0), EMA Lightning by Canberk Aslan (Apache-2.0, with normalizer-tr by
+Erdem Tuna), Duyu-small by KaanAydinli (Apache-2.0, encoder design from balbal). ONNX Runtime by Microsoft (MIT). See
+`NOTICE`.
 ```
 <!-- release-notes:end -->
 
