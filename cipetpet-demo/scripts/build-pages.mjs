@@ -38,7 +38,8 @@ function arg(name) {
 
 const out = resolve(arg("--out") ?? join(ROOT, "pages"));
 const packsDir = arg("--packs-dir") ? resolve(arg("--packs-dir")) : null;
-const tag = arg("--tag") ?? "latest";
+const coreVersion = JSON.parse(readFileSync(join(CORE, "package.json"), "utf8")).version;
+const tag = arg("--tag") ?? `v${coreVersion}`;
 
 /** the packs the demo can ask for: the TTS pack and both STT precisions (see src/voice/cipetpet.ts) */
 const PACKS = ["antalia-mini-mixed", "duyu-small-int8", "duyu-small-q4"];
