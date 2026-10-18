@@ -18,6 +18,7 @@ const WORK = join(TEST_OUT, `pull-cli-${process.pid}`);
 // a release (RELEASES.md, "for maintainers") would otherwise turn every synthetic release below, which is also version 0.1.0,
 // into a digest mismatch (exit 3). The test that needs a digest makes its own copy of the CLI.
 const CLI_PKG = join(TEST_OUT, `pull-cli-bin-${process.pid}`);
+const INSTALLED = (JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { version: string }).version;
 mkdirSync(join(CLI_PKG, "bin"), { recursive: true });
 copyFileSync(join(ROOT, "bin/cipetpet.mjs"), join(CLI_PKG, "bin/cipetpet.mjs"));
 copyFileSync(join(ROOT, "package.json"), join(CLI_PKG, "package.json"));
@@ -50,7 +51,8 @@ function handle(req: IncomingMessage, res: ServerResponse): unknown {
     res.end(body); // a Range request header is simply ignored
   };
   if (req.method === "HEAD") return send(405, "");
-  const dl = /^\/(?:dl|gh\/o\/r\/releases\/download\/(v0\.1\.0))\/([^/]+)$/.exec(url.pathname); // GitHub only has the tag v0.1.0
+  // GitHub has the tag v0.1.0, and one for the installed version (the default tag), both with the synthetic release
+  const dl = new RegExp(`^/(?:dl|gh/o/r/releases/download/(v0\\.1\\.0|v${INSTALLED.replace(/\./g, "\\.")}))/([^/]+)$`).exec(url.pathname);
   if (dl) {
     dl[1] = dl[2];
     if (!files.has(dl[1])) return send(404, "not found", "text/plain");
@@ -356,9 +358,14 @@ describe("cipetpet pull", () => {
     const q = project();
     hits = [];
     const d = await cli(["pull", "--repo", "o/r", "--no-ort", "--no-docs", "--packs", "antalia-mini-int8"], { cwd: q.cwd, env });
-    const installed = (JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { version: string }).version;
-    assert.equal(d.code, 0, d.stderr);
+    const installed = INSTALLED;
     assert.ok(hits.some((h) => h.path === `/gh/o/r/releases/download/v${installed}/cipetpet-release.json`), `asked for v${installed}`);
+    // the synthetic release is version 0.1.0: under another installed version's tag it is refused as a mismatch
+    if (installed === "0.1.0") assert.equal(d.code, 0, d.stderr);
+    else {
+      assert.equal(d.code, 3, d.stdout + d.stderr);
+      assert.match(d.stderr, new RegExp(`is for cipetpet 0\\.1\\.0, not ${installed.replace(/\./g, "\\.")}`));
+    }
     // --base-url disables the API, so "latest" cannot be resolved
     const bad = await cli(["pull", "--base-url", base(), "--tag", "latest"], { cwd: q.cwd });
     assert.equal(bad.code, 1);

@@ -1,6 +1,6 @@
 {
   "name": "cipetpet",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Turkish speech in the browser: Antalia-2 Mini and EMA Lightning (text to speech) and Duyu-small (speech recognition) running on ONNX Runtime Web (WASM), with the model files wrapped in .cpet packs.",
   "license": "Apache-2.0",
   "type": "module",

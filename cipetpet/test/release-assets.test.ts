@@ -224,9 +224,11 @@ describe("release-assets", () => {
     const run = (...args: string[]) =>
       spawnSync(process.execPath, ["--import", "tsx", join(ROOT, "tools/release-assets.ts"), ...args], { cwd: ROOT, encoding: "utf8" });
     const out = join(work, "cli-out");
-    const ok = run("--packs", join(work, "packs"), "--out", out, "--version", "0.1.0");
+    // the package's own version, which is also what --digest below defaults to (so both runs make the same manifest)
+    const version = (JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { version: string }).version;
+    const ok = run("--packs", join(work, "packs"), "--out", out, "--version", version);
     assert.equal(ok.status, 0, ok.stderr);
-    assert.match(ok.stdout, new RegExp(`^release 0\\.1\\.0 \\(onnxruntime-web ${realOrt.replace(/\./g, "\\.")}\\)`));
+    assert.match(ok.stdout, new RegExp(`^release ${version.replace(/\./g, "\\.")} \\(onnxruntime-web ${realOrt.replace(/\./g, "\\.")}\\)`));
     assert.match(ok.stdout, /^ort-wasm-simd-threaded\.wasm +ort +[\d.]+ MiB +[0-9a-f]{64}$/m);
     assert.match(ok.stdout, /^cipetpet-release\.json +manifest /m);
     assert.match(ok.stdout, /14 files|11 files/);
