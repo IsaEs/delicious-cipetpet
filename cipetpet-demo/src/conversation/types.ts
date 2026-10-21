@@ -46,6 +46,8 @@ export interface AssistantMessage {
   at: number;
   /** true when the reply was shown without speech (TTS not loaded) */
   silent?: boolean;
+  /** seconds of synthesised speech the controller keeps for this reply (it can be downloaded); unset when none */
+  audioSeconds?: number;
 }
 
 export type Message = UserMessage | AssistantMessage;

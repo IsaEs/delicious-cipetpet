@@ -61,7 +61,8 @@ export const DEFAULT_SETTINGS: Settings = {
   endSilenceMs: 900,
   echoCancellation: false,
   bargeIn: true,
-  useWorker: false,
+  // inference off the main thread: a synthesis step blocks the thread it runs on for up to ~0.8 s
+  useWorker: true,
   uiLang: "tr",
   theme: "system",
 };

@@ -60,6 +60,11 @@ Settings → Speech synthesis → Voice model switches between **Antalia-2 Mini*
 `../cipetpet` (and out of the releases from the next version on); the page marks a voice whose pack the server does not
 have.
 
+Every spoken reply has **Download audio**: the speech exactly as it was synthesised, as a 16-bit WAV (the page keeps
+the last ~5 minutes of speech in memory). The models run in a Web Worker by default (Settings → Performance), so
+synthesis never freezes the page, and playback learns a short start-up delay on slow devices so that a reply's
+sentences follow each other without gaps (kept in `localStorage` as `cipetpet-demo:prebuffer`).
+
 ## Host it as a static site
 
 `npm run build:pages` writes a complete static site into `pages/`:

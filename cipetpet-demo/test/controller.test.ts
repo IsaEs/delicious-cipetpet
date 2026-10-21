@@ -436,6 +436,61 @@ describe("ConversationController", () => {
     expect(env.backend.calls).toHaveLength(1);
   });
 
+  it("keeps each reply's synthesised speech for download; a replay replaces it, Clear drops it", async () => {
+    const env = setup();
+    env.backend.deltas = ["Birinci cümle burada bitiyor. ", "İkinci cümle de burada bitiyor."];
+    env.c.sendText("Merhaba");
+    await until(() => env.c.getState().phase === "idle" && env.reply()?.status === "done", 3000, "done");
+    const id = env.reply()!.id;
+    // two sentences x 2 chunks x 0.1 s of FakeTts audio
+    expect(env.reply()!.audioSeconds).toBe(0.4);
+    const got = env.c.getAudio(id)!;
+    expect(got.sampleRate).toBe(48000);
+    expect(got.audio.length).toBe(0.4 * 48000);
+    expect(env.c.getAudio("nope")).toBeNull();
+
+    env.tts.chunks = 1;
+    env.c.speakAgain(id);
+    expect(env.reply()!.audioSeconds).toBe(0.4); // the old recording stays until the replay is done
+    await until(() => env.c.getState().phase === "idle", 3000, "replay done");
+    expect(env.reply()!.audioSeconds).toBe(0.2);
+    expect(env.c.getAudio(id)!.audio.length).toBe(0.2 * 48000);
+
+    env.c.clear();
+    expect(env.c.getAudio(id)).toBeNull();
+  });
+
+  it("an interrupted reply keeps what was synthesised; a reply without TTS has no audio", async () => {
+    const env = setup();
+    env.tts.synthMs = 40;
+    env.backend.deltas = ["Birinci cümle burada bitiyor. ", "İkinci cümle de burada bitiyor."];
+    env.c.sendText("Merhaba");
+    await until(() => env.audio.played.length >= 1, 3000, "first chunk");
+    env.c.stop();
+    await until(() => env.reply()?.audioSeconds !== undefined, 3000, "kept");
+    expect(env.c.getAudio(env.reply()!.id)!.audio.length).toBeGreaterThan(0);
+
+    const silent = setup({}, { tts: false });
+    silent.c.sendText("Merhaba");
+    await until(() => silent.c.getState().phase === "idle" && silent.reply()?.status === "done", 3000, "done");
+    expect(silent.reply()!.audioSeconds).toBeUndefined();
+    expect(silent.c.getAudio(silent.reply()!.id)).toBeNull();
+  });
+
+  it("tells the player which sentence's audio comes after a wait for the language model", async () => {
+    const env = setup();
+    const fresh: boolean[] = [];
+    const push = env.audio.push.bind(env.audio);
+    env.audio.push = (chunk: Float32Array, rate: number, isFresh?: boolean) => (fresh.push(!!isFresh), push(chunk, rate));
+    // a sentence is complete once the text after it arrives: the second one comes with the third delta
+    env.backend.deltas = ["Birinci cümle burada bitiyor. ", "İkinci cümle de ", "burada bitiyor."];
+    env.backend.deltaMs = 120; // the second sentence arrives long after the first is synthesised
+    env.c.sendText("Merhaba");
+    await until(() => env.c.getState().phase === "idle", 3000, "done");
+    // per sentence: [first chunk, second chunk]; both first chunks waited for their text
+    expect(fresh).toEqual([true, false, true, false]);
+  });
+
   it("typed text while listening cancels the recording and runs the turn", async () => {
     const env = setup();
     env.c.toggleMic();

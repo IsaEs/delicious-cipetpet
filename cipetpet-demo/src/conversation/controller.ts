@@ -110,6 +110,8 @@ class Speaker {
     private readonly audio: AudioOut,
     private readonly opts: { speed: number; seed: number; signal: AbortSignal },
     private readonly onFirstAudio: (index: number, startsInSec: number) => void,
+    /** every chunk handed to the player, in order (kept for "download the audio") */
+    private readonly onChunk: (chunk: Float32Array) => void = () => {},
   ) {
     opts.signal.addEventListener("abort", () => this.wake?.(), { once: true });
     this.done = this.run();
@@ -128,9 +130,12 @@ class Speaker {
   private async run(): Promise<void> {
     const { signal } = this.opts;
     for (;;) {
+      // the next sentence was not there yet: its audio follows a wait for the language model, not for synthesis
+      let waited = false;
       while (this.queue.length === 0) {
         if (signal.aborted) throw abortError();
         if (this.closed) return;
+        waited = true;
         await new Promise<void>((resolve) => (this.wake = resolve));
         this.wake = undefined;
       }
@@ -141,7 +146,8 @@ class Speaker {
       let first = true;
       for await (const chunk of this.tts.stream(text, { speed: this.opts.speed, seed: this.opts.seed, signal })) {
         if (signal.aborted) throw abortError();
-        const startsIn = this.audio.push(chunk, this.tts.sampleRate);
+        const startsIn = this.audio.push(chunk, this.tts.sampleRate, first && waited);
+        this.onChunk(chunk);
         if (first) {
           first = false;
           this.onFirstAudio(sentence.index, startsIn);
@@ -149,6 +155,15 @@ class Speaker {
       }
     }
   }
+}
+
+/** the synthesised speech kept for "download", newest replies first: about 55 MB of float samples at 48 kHz */
+export const AUDIO_KEEP_SECONDS = 300;
+
+interface Recording {
+  chunks: Float32Array[];
+  sampleRate: number;
+  seconds: number;
 }
 
 /** ChatError codes that more listening cannot fix */
@@ -167,6 +182,8 @@ export class ConversationController {
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
   private press: { at: number; started: boolean } | null = null;
   private disposed = false;
+  /** each reply's last complete synthesis (a replay replaces it once it is done), oldest first */
+  private readonly recordings = new Map<string, Recording>();
 
   private readonly now: () => number;
   private readonly newId: () => string;
@@ -307,9 +324,15 @@ export class ConversationController {
     const spans = msg.sentences.length
       ? msg.sentences.map((sp, index) => ({ text: msg.text.slice(sp.start, sp.end), start: sp.start, end: sp.end, index }))
       : splitSentences(msg.text);
-    const speaker = new Speaker(tts, this.deps.audio, { speed: s.ttsSpeed, seed: s.ttsSeed, signal: abort.signal }, (index, startsIn) =>
-      this.later(startsIn * 1000, gen, () => this.dispatch({ type: "speaking", id, index })),
+    const rec = this.record(id, tts.sampleRate);
+    const speaker = new Speaker(
+      tts,
+      this.deps.audio,
+      { speed: s.ttsSpeed, seed: s.ttsSeed, signal: abort.signal },
+      (index, startsIn) => this.later(startsIn * 1000, gen, () => this.dispatch({ type: "speaking", id, index })),
+      rec.onChunk,
     );
+    void speaker.done.then(rec.keep, rec.keep);
     for (const sp of spans) speaker.enqueue(sp);
     speaker.close();
     void (async () => {
@@ -327,7 +350,47 @@ export class ConversationController {
 
   clear(): void {
     this.stop();
+    this.recordings.clear();
     this.dispatch({ type: "clear" });
+  }
+
+  /** the speech last synthesised for a reply, joined (null when none is kept) */
+  getAudio(id: string): { audio: Float32Array; sampleRate: number } | null {
+    const r = this.recordings.get(id);
+    if (!r) return null;
+    const audio = new Float32Array(r.chunks.reduce((n, c) => n + c.length, 0));
+    let offset = 0;
+    for (const c of r.chunks) {
+      audio.set(c, offset);
+      offset += c.length;
+    }
+    return { audio, sampleRate: r.sampleRate };
+  }
+
+  /** collects one synthesis of a reply; `keep` (when the speaker is done, finished or stopped) makes it the reply's
+   * recording, replacing an earlier one, and drops the oldest recordings past AUDIO_KEEP_SECONDS */
+  private record(id: string, sampleRate: number): { onChunk(chunk: Float32Array): void; keep(): void } {
+    const rec: Recording = { chunks: [], sampleRate, seconds: 0 };
+    return {
+      onChunk: (chunk) => {
+        rec.chunks.push(chunk);
+        rec.seconds += chunk.length / sampleRate;
+      },
+      keep: () => {
+        if (rec.seconds === 0 || this.disposed) return;
+        this.recordings.delete(id); // re-inserted: newest last
+        this.recordings.set(id, rec);
+        this.dispatch({ type: "audio", id, seconds: Math.round(rec.seconds * 10) / 10 });
+        let total = 0;
+        for (const r of this.recordings.values()) total += r.seconds;
+        for (const [old, r] of this.recordings) {
+          if (total <= AUDIO_KEEP_SECONDS || old === id) break;
+          this.recordings.delete(old);
+          total -= r.seconds;
+          this.dispatch({ type: "audio", id: old, seconds: 0 });
+        }
+      },
+    };
   }
 
   dismiss(id: number): void {
@@ -337,6 +400,7 @@ export class ConversationController {
   dispose(): void {
     this.halt();
     this.disposed = true;
+    this.recordings.clear();
     this.listeners.clear();
     this.levelListeners.clear();
   }
@@ -532,13 +596,21 @@ export class ConversationController {
       Object.assign(timings, t);
       this.dispatch({ type: "timings", id: assistantId, timings: t });
     };
+    const rec = tts ? this.record(assistantId, tts.sampleRate) : null;
     const speaker = tts
-      ? new Speaker(tts, this.deps.audio, { speed: s.ttsSpeed, seed: s.ttsSeed, signal: abort.signal }, (index, startsIn) => {
-          if (gen !== this.gen) return;
-          if (timings.ttfaMs === undefined) setTimings({ ttfaMs: Math.round(this.now() - input.turnStart + startsIn * 1000) });
-          this.later(startsIn * 1000, gen, () => this.dispatch({ type: "speaking", id: assistantId, index }));
-        })
+      ? new Speaker(
+          tts,
+          this.deps.audio,
+          { speed: s.ttsSpeed, seed: s.ttsSeed, signal: abort.signal },
+          (index, startsIn) => {
+            if (gen !== this.gen) return;
+            if (timings.ttfaMs === undefined) setTimings({ ttfaMs: Math.round(this.now() - input.turnStart + startsIn * 1000) });
+            this.later(startsIn * 1000, gen, () => this.dispatch({ type: "speaking", id: assistantId, index }));
+          },
+          rec?.onChunk,
+        )
       : null;
+    if (speaker && rec) void speaker.done.then(rec.keep, rec.keep);
 
     const emit = (sentence: Sentence) => {
       this.dispatch({ type: "sentence", id: assistantId, start: sentence.start, end: sentence.end });

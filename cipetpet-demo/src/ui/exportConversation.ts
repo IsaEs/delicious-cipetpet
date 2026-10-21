@@ -27,7 +27,11 @@ export function conversationJson(messages: Message[], settings: Settings, backen
 }
 
 export function downloadText(text: string, filename: string, type = "application/json"): void {
-  const url = URL.createObjectURL(new Blob([text], { type }));
+  downloadBlob(new Blob([text], { type }), filename);
+}
+
+export function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;

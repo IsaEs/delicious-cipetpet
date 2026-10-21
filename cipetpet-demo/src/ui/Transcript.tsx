@@ -1,7 +1,7 @@
 import { memo, useContext, useEffect, useLayoutEffect, useRef, type ReactElement, type ReactNode } from "react";
 import type { AssistantMessage, Message, UserMessage } from "../conversation/types.ts";
 import { formatMs, I18nContext, useT } from "./i18n.ts";
-import { MicIcon, SpeakerIcon } from "./icons.tsx";
+import { DownloadIcon, MicIcon, SpeakerIcon } from "./icons.tsx";
 
 function UserBubble({ m }: { m: UserMessage }): ReactElement {
   const t = useT();
@@ -37,7 +37,17 @@ function highlighted(m: AssistantMessage): ReactNode {
   );
 }
 
-function AssistantBubble({ m, onSpeakAgain, canSpeak }: { m: AssistantMessage; onSpeakAgain(id: string): void; canSpeak: boolean }): ReactElement {
+function AssistantBubble({
+  m,
+  onSpeakAgain,
+  onDownload,
+  canSpeak,
+}: {
+  m: AssistantMessage;
+  onSpeakAgain(id: string): void;
+  onDownload(id: string): void;
+  canSpeak: boolean;
+}): ReactElement {
   const t = useT();
   const { lang } = useContext(I18nContext);
   const tm = m.timings;
@@ -67,6 +77,12 @@ function AssistantBubble({ m, onSpeakAgain, canSpeak }: { m: AssistantMessage; o
             {t("msg.speakAgain")}
           </button>
         )}
+        {!busy && m.audioSeconds !== undefined && (
+          <button type="button" className="link-button" onClick={() => onDownload(m.id)} title={t("msg.downloadHint", { s: formatMs(t, m.audioSeconds * 1000, lang) })}>
+            <DownloadIcon width={16} height={16} />
+            {t("msg.download")}
+          </button>
+        )}
       </div>
     </li>
   );
@@ -78,10 +94,12 @@ const MemoAssistant = memo(AssistantBubble);
 export interface TranscriptProps {
   messages: Message[];
   onSpeakAgain(id: string): void;
+  /** saves the reply's synthesised speech (shown when the message has audioSeconds) */
+  onDownload(id: string): void;
   canSpeak: boolean;
 }
 
-export function Transcript({ messages, onSpeakAgain, canSpeak }: TranscriptProps): ReactElement {
+export function Transcript({ messages, onSpeakAgain, onDownload, canSpeak }: TranscriptProps): ReactElement {
   const ref = useRef<HTMLOListElement>(null);
   const stick = useRef(true);
   const t = useT();
@@ -106,7 +124,7 @@ export function Transcript({ messages, onSpeakAgain, canSpeak }: TranscriptProps
     // announced by the separate live region in Conversation.tsx
     <ol ref={ref} className="transcript" role="log" aria-live="off" aria-label={t("app.title")}>
       {messages.map((m) =>
-        m.role === "user" ? <MemoUser key={m.id} m={m} /> : <MemoAssistant key={m.id} m={m} onSpeakAgain={onSpeakAgain} canSpeak={canSpeak} />,
+        m.role === "user" ? <MemoUser key={m.id} m={m} /> : <MemoAssistant key={m.id} m={m} onSpeakAgain={onSpeakAgain} onDownload={onDownload} canSpeak={canSpeak} />,
       )}
     </ol>
   );

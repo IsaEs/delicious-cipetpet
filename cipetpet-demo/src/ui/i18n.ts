@@ -69,6 +69,8 @@ const tr = {
   "msg.error": "hata",
   "msg.silent": "sessiz (ses modeli yüklenmemişti)",
   "msg.speakAgain": "Yeniden seslendir",
+  "msg.download": "Sesi indir",
+  "msg.downloadHint": "Seslendirilen yanıtı WAV olarak kaydet ({s})",
   "msg.thinking": "Düşünüyor…",
   "msg.echo": "yankı modu",
 
@@ -254,6 +256,8 @@ const en: Record<MessageKey, string> = {
   "msg.error": "error",
   "msg.silent": "silent (the speech model was not loaded)",
   "msg.speakAgain": "Speak again",
+  "msg.download": "Download audio",
+  "msg.downloadHint": "Save the spoken reply as WAV ({s})",
   "msg.thinking": "Thinking…",
   "msg.echo": "echo mode",
 

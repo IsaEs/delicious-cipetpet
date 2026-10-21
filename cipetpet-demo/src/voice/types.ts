@@ -38,9 +38,10 @@ export interface TtsEngine {
 export interface AudioOut {
   /** creates / resumes the playback context; call it from a user gesture (the first mic press) */
   unlock(): void;
-  /** queues a chunk after everything queued; returns the seconds from now until it starts playing */
-  push(chunk: Float32Array, sampleRate: number): number;
-  /** resolves when everything queued so far has played (or stop() was called) */
+  /** queues a chunk after everything queued; returns the seconds from now until it starts playing. `fresh`: the chunk
+   * comes after a wait for text (the language model), so a gap before it is not the voice's fault */
+  push(chunk: Float32Array, sampleRate: number, fresh?: boolean): number;
+  /** resolves when everything queued so far has played (or stop() was called); the end of a reply */
   finish(): Promise<void>;
   /** stops at once and drops the queue */
   stop(): void;

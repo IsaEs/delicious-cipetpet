@@ -36,6 +36,7 @@ export type Action =
   | { type: "reply-done"; id: string }
   | { type: "turn-end"; id: string }
   | { type: "replay"; id: string }
+  | { type: "audio"; id: string; seconds: number }
   | { type: "interrupt"; reason: "barge-in" | "stop" }
   | { type: "error"; message: string; code?: ChatErrorCode; key?: NoticeKey }
   | { type: "notice"; kind: Notice["kind"]; key: NoticeKey; message?: string }
@@ -157,6 +158,12 @@ export function reducer(s: ConversationState, a: Action): ConversationState {
       if (!target || target.role !== "assistant") return base;
       return { ...base, activeId: a.id, phase: "speaking" };
     }
+
+    case "audio":
+      return updateAssistant(s, a.id, (m) => {
+        const { audioSeconds: _dropped, ...rest } = m;
+        return a.seconds > 0 ? { ...rest, audioSeconds: a.seconds } : rest;
+      });
 
     case "interrupt": {
       if (s.phase === "idle" && !s.activeId) return s;

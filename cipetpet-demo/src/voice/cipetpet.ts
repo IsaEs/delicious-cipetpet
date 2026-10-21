@@ -9,9 +9,10 @@
 // * Microphone: the core's MicRecorder (16 kHz mono out, RMS level callback for the meter and the VAD).
 
 import { createElement, useMemo, type ReactElement, type ReactNode } from "react";
-import { MicRecorder, StreamPlayer } from "cipetpet";
+import { encodeWav, MicRecorder, StreamPlayer } from "cipetpet";
 import { CipetpetProvider, useAntalia, useDuyu, type ModelOptions, type SttModel, type TtsModel } from "cipetpet-react";
 import type { DuyuPrecision, TtsModelChoice } from "./languages.ts";
+import { Prebuffer } from "./prebuffer.ts";
 import { STT_SAMPLE_RATE, type AudioOut, type MicInput, type MicSession, type SttEngine, type TtsEngine } from "./types.ts";
 
 /** where the server exposes the packs and onnxruntime-web's files (server/server.mjs) */
@@ -139,10 +140,29 @@ type AudioContextCtor = new (options?: AudioContextOptions) => AudioContext;
 
 /** StreamPlayer's lead time for an idle queue (its first chunk starts this long after the push) */
 const LEAD_SECONDS = 0.05;
+const PREBUFFER_KEY = "cipetpet-demo:prebuffer";
+
+function storedPrebuffer(): number {
+  try {
+    return Number(globalThis.localStorage?.getItem(PREBUFFER_KEY) ?? 0) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+function savePrebuffer(seconds: number): void {
+  try {
+    globalThis.localStorage?.setItem(PREBUFFER_KEY, String(seconds));
+  } catch {
+    // blocked storage: it is learned again on the next visit
+  }
+}
 
 export function createAudioOut(): AudioOut {
   let ctx: AudioContext | null = null;
   let player: StreamPlayer | null = null;
+  // learned per device (and kept across visits): silence before a reply so that its sentences play without gaps
+  const prebuffer = new Prebuffer(storedPrebuffer(), savePrebuffer);
 
   const context = (): AudioContext => {
     if (!ctx || ctx.state === "closed") {
@@ -164,21 +184,25 @@ export function createAudioOut(): AudioOut {
         // reported on the first push
       }
     },
-    push(chunk, sampleRate) {
+    push(chunk, sampleRate, fresh = false) {
       const c = context();
       if (!player || player.sampleRate !== sampleRate) {
         player?.stop();
         player = new StreamPlayer(sampleRate, c);
       }
+      const now = c.currentTime;
+      const pad = prebuffer.beforeChunk(now, now + player.buffered, LEAD_SECONDS, fresh);
+      if (pad >= 0.01) player.push(new Float32Array(Math.round(pad * sampleRate)));
       const startsIn = player.buffered > 0 ? player.buffered : LEAD_SECONDS;
       player.push(chunk);
       return startsIn;
     },
     finish() {
-      return player ? player.finish() : Promise.resolve();
+      return (player ? player.finish() : Promise.resolve()).then(() => prebuffer.finished());
     },
     stop() {
       player?.stop();
+      prebuffer.stopped();
     },
   };
 }
@@ -204,4 +228,11 @@ export function createMicInput(): MicInput {
       };
     },
   };
+}
+
+// ------------------------------------------------------------------------------------------ download
+
+/** 16-bit PCM WAV of mono audio */
+export function wavBlob(samples: Float32Array, sampleRate: number): Blob {
+  return new Blob([encodeWav(samples, sampleRate, { bitDepth: 16 }) as Uint8Array<ArrayBuffer>], { type: "audio/wav" });
 }

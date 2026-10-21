@@ -7,11 +7,11 @@ import { createDirectBackend } from "../llm/direct.ts";
 import { createEchoBackend } from "../llm/echo.ts";
 import { createProxyBackend } from "../llm/proxy.ts";
 import type { ChatBackend } from "../llm/types.ts";
-import { createAudioOut, createMicInput, PACK_MB, sttPack, ttsPack, useVoiceModels, workerSupported } from "../voice/cipetpet.ts";
+import { createAudioOut, createMicInput, PACK_MB, sttPack, ttsPack, useVoiceModels, wavBlob, workerSupported } from "../voice/cipetpet.ts";
 import { TTS_MODEL_NAMES, TTS_MODELS } from "../voice/languages.ts";
 import { chatTarget } from "./chatTarget.ts";
 import { Composer, LevelMeter, MicButton, StatusPill, StopButton, Switch } from "./Controls.tsx";
-import { conversationJson, downloadText } from "./exportConversation.ts";
+import { conversationJson, downloadBlob, downloadText } from "./exportConversation.ts";
 import { Header } from "./Header.tsx";
 import { useT, type MessageKey } from "./i18n.ts";
 import { DownloadIcon, InfoIcon, TrashIcon } from "./icons.tsx";
@@ -60,6 +60,8 @@ export function Conversation({ settings, update, server }: ConversationProps): R
 
   // direct mode keys, per provider: memory only, unless the user ticks "remember"
   const keys = useApiKeys();
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
   const keysRef = useRef(keys);
   keysRef.current = keys;
 
@@ -147,6 +149,15 @@ export function Conversation({ settings, update, server }: ConversationProps): R
   const closeDrawer = useCallback(() => setDrawer(false), []);
   const onDismiss = useCallback((id: number) => controller.dismiss(id), [controller]);
   const onSpeakAgain = useCallback((id: string) => controller.speakAgain(id), [controller]);
+  const onDownload = useCallback(
+    (id: string) => {
+      const audio = controller.getAudio(id);
+      if (!audio) return;
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      downloadBlob(wavBlob(audio.audio, audio.sampleRate), `cipetpet-${settingsRef.current.ttsModel}-${stamp}.wav`);
+    },
+    [controller],
+  );
 
   const exportJson = () => {
     const model = backendKind === "echo" ? "echo" : target.model;
@@ -220,7 +231,7 @@ export function Conversation({ settings, update, server }: ConversationProps): R
                 {t("toolbar.clear")}
               </button>
             </div>
-            <Transcript messages={state.messages} onSpeakAgain={onSpeakAgain} canSpeak={ttsReady} />
+            <Transcript messages={state.messages} onSpeakAgain={onSpeakAgain} onDownload={onDownload} canSpeak={ttsReady} />
           </>
         )}
       </main>
